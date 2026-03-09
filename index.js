@@ -2,10 +2,14 @@ require("dotenv").config();
 const { Client, GatewayIntentBits, Collection, ActivityType } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
+
+http.createServer((req, res) => res.end("OK")).listen(process.env.PORT || 3000, () => {
+  console.log(`Keep-alive server running on port ${process.env.PORT || 3000}`);
+});
+
 const db = require("./database.js");
 db.init().then(() => console.log("Database ready")).catch(console.error);
-const http = require("http");
-http.createServer((req, res) => res.end("OK")).listen(process.env.PORT || 3000);
 
 const client = new Client({
   intents: [
@@ -37,6 +41,10 @@ for (const file of eventFiles) {
     client.on(event.name, (...args) => event.execute(...args, client));
   }
 }
+
+client.on("interactionCreate", (interaction) => {
+  console.log(`Interaction received: type=${interaction.type} id=${interaction.customId ?? interaction.commandName ?? "unknown"}`);
+});
 
 client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
