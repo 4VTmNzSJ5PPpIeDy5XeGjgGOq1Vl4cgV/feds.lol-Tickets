@@ -1,13 +1,14 @@
 {
   "name": "ticket-bot",
   "version": "1.0.0",
+  "description": "Discord ticket bot",
   "main": "index.js",
   "engines": {
     "node": "18.x"
   },
   "scripts": {
     "start": "node index.js",
-    "deploy": "node deploy-commands.js"
+    "deploy:guild": "node deploy-commands.js"
   },
   "dependencies": {
     "discord-html-transcripts": "^3.2.0",
