@@ -74,6 +74,14 @@ console.log("==> [14] TOKEN length:", process.env.TOKEN?.length);
 console.log("==> [15] TOKEN start:", process.env.TOKEN?.slice(0, 20));
 console.log("==> [16] Calling client.login...");
 
+console.log("==> [16] Testing Discord API connectivity...");
+fetch("https://discord.com/api/v10/gateway")
+  .then(res => res.json())
+  .then(data => console.log("==> Discord API reachable:", data))
+  .catch(err => console.error("==> Discord API unreachable:", err.message));
+
+console.log("==> [17] Calling client.login...");
+
 client.login(process.env.TOKEN).then(() => {
   console.log("==> [17] client.login() resolved successfully");
 }).catch(err => {
