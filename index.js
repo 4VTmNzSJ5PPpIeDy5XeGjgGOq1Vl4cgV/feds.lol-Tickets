@@ -3,7 +3,6 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const https = require("https");
 const {
   Client,
   GatewayIntentBits,
@@ -11,7 +10,7 @@ const {
   ActivityType
 } = require("discord.js");
 
-console.log("==> BUILD MARKER: 2026-03-09-LOGIN-DIAG-V1");
+console.log("==> BUILD MARKER: 2026-03-09-LOGIN-CLEAN-V1");
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -52,42 +51,11 @@ http
     console.log(`[boot] Keep-alive server running on port ${process.env.PORT || 3000}`);
   });
 
-function testDiscordApi() {
-  return new Promise((resolve) => {
-    https
-      .get("https://discord.com/api/v10/gateway", (res) => {
-        let body = "";
-
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-
-        res.on("end", () => {
-          console.log("[discord test] status:", res.statusCode);
-          console.log("[discord test] content-type:", res.headers["content-type"] || "unknown");
-          console.log("[discord test] first 200 chars:", body.slice(0, 200));
-
-          resolve({
-            status: res.statusCode,
-            contentType: res.headers["content-type"] || "",
-            body
-          });
-        });
-      })
-      .on("error", (err) => {
-        console.error("[discord test] error:", err?.stack || err);
-        resolve(null);
-      });
-  });
-}
-
 async function loadDatabase() {
   console.log("[boot] Loading database.js");
   const db = require("./database.js");
-
   await db.init();
   console.log("[boot] Database ready");
-
   return db;
 }
 
@@ -210,17 +178,7 @@ async function main() {
     }
   });
 
-  const discordTest = await testDiscordApi();
-
-  if (discordTest && typeof discordTest.body === "string") {
-    const trimmed = discordTest.body.trim();
-    if (trimmed.startsWith("<!DOCTYPE html") || trimmed.startsWith("<html")) {
-      console.error("[boot] Discord API test returned HTML instead of JSON. This points to proxy/intercept/wrong routing.");
-    }
-  }
-
   await loadDatabase();
-
   loadCommands(client);
   loadEvents(client);
 
