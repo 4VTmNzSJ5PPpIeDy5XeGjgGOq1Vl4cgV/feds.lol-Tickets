@@ -54,4 +54,8 @@ client.once("clientReady", () => {
   });
 });
 
-client.login(process.env.TOKEN);
+console.log("TOKEN present:", !!process.env.TOKEN);
+
+client.login(process.env.TOKEN).catch(err => {
+  console.error("Failed to login:", err.message);
+});
