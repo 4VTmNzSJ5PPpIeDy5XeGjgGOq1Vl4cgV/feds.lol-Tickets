@@ -58,6 +58,8 @@ client.once("clientReady", () => {
 });
 
 console.log("TOKEN present:", !!process.env.TOKEN);
+console.log("TOKEN length:", process.env.TOKEN?.length);
+console.log("TOKEN start:", process.env.TOKEN?.slice(0, 20));
 
 client.login(process.env.TOKEN).catch(err => {
   console.error("Failed to login:", err.message);
