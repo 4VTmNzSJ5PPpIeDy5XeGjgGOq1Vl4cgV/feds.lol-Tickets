@@ -1,4 +1,7 @@
 require("dotenv").config();
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err);
+});
 const { Client, GatewayIntentBits, Collection, ActivityType } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
