@@ -69,12 +69,11 @@ client.once("clientReady", () => {
   });
 });
 
-console.log("==> [13] TOKEN present:", !!process.env.TOKEN);
-console.log("==> [14] TOKEN length:", process.env.TOKEN?.length);
-console.log("==> [15] TOKEN start:", process.env.TOKEN?.slice(0, 20));
-console.log("==> [16] Calling client.login...");
-console.log('TOKEN exists?', !!process.env.TOKEN)
-console.log('TOKEN length:', process.env.TOKEN ? process.env.TOKEN.length : 0)
+console.log('[boot] TOKEN exists:', !!process.env.TOKEN)
+console.log('[boot] TOKEN length:', process.env.TOKEN ? process.env.TOKEN.length : 0)
+console.log('[boot] HTTP_PROXY:', process.env.HTTP_PROXY || 'not set')
+console.log('[boot] HTTPS_PROXY:', process.env.HTTPS_PROXY || 'not set')
+console.log('[boot] NODE_ENV:', process.env.NODE_ENV || 'not set')
 
 client.login(process.env.TOKEN).then(() => {
   console.log("==> [17] client.login() resolved successfully");
