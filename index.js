@@ -4,6 +4,8 @@ const fs = require("fs");
 const path = require("path");
 const db = require("./database.js");
 db.init().then(() => console.log("Database ready")).catch(console.error);
+const http = require("http");
+http.createServer((req, res) => res.end("OK")).listen(process.env.PORT || 3000);
 
 const client = new Client({
   intents: [
