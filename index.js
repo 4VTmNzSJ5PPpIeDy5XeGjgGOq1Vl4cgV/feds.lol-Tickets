@@ -3,6 +3,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const { URL } = require("url");
 const {
   Client,
   GatewayIntentBits,
@@ -11,7 +12,7 @@ const {
   Partials
 } = require("discord.js");
 
-console.log("==> BUILD MARKER: 2026-03-10-GATEWAY-BACKOFF-V1");
+console.log("==> BUILD MARKER: 2026-03-10-GATEWAY-BACKOFF-V2");
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -30,6 +31,7 @@ function requireEnv(name) {
 }
 
 const TOKEN = requireEnv("TOKEN");
+const db = require("./database.js");
 
 console.log("[boot] dotenv loaded");
 console.log("[boot] TOKEN exists:", !!TOKEN);
@@ -42,9 +44,6 @@ console.log("[boot] http_proxy:", process.env.http_proxy || "not set");
 console.log("[boot] https_proxy:", process.env.https_proxy || "not set");
 console.log("[boot] ALL_PROXY:", process.env.ALL_PROXY || "not set");
 console.log("[boot] all_proxy:", process.env.all_proxy || "not set");
-
-const { URL } = require("url");
-const db = require("./database.js");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -155,37 +154,43 @@ function isAuthorised(urlObj) {
   return urlObj.searchParams.get("key") === expected;
 }
 
-http
-  .createServer(async (req, res) => {
-    try {
-      const urlObj = new URL(req.url, `http://${req.headers.host}`);
-      const pathname = urlObj.pathname;
+function writeAndEnd(req, res, startedAt, statusCode, headers, body) {
+  res.writeHead(statusCode, headers);
+  res.end(body);
+  console.log(`[web] ${req.method} ${req.url} -> ${statusCode} in ${Date.now() - startedAt}ms`);
+}
 
-      if (pathname === "/healthz") {
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        return res.end("ok");
+const server = http.createServer(async (req, res) => {
+  const startedAt = Date.now();
+  console.log(`[web] ${req.method} ${req.url} start`);
+
+  try {
+    const urlObj = new URL(req.url, `http://${req.headers.host}`);
+    const pathname = urlObj.pathname;
+
+    if (pathname === "/healthz") {
+      return writeAndEnd(req, res, startedAt, 200, { "Content-Type": "text/plain" }, "ok");
+    }
+
+    if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
+      if (!isAuthorised(urlObj)) {
+        return writeAndEnd(req, res, startedAt, 403, { "Content-Type": "text/plain" }, "Forbidden");
       }
 
-      if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
-        if (!isAuthorised(urlObj)) {
-          res.writeHead(403, { "Content-Type": "text/plain" });
-          return res.end("Forbidden");
-        }
+      if (pathname === "/transcripts") {
+        const rows = await db.listTranscripts(200);
+        const q = (urlObj.searchParams.get("q") || "").trim().toLowerCase();
 
-        if (pathname === "/transcripts") {
-          const rows = await db.listTranscripts(200);
-          const q = (urlObj.searchParams.get("q") || "").trim().toLowerCase();
+        const filtered = q
+          ? rows.filter((row) =>
+              String(row.channel_name).toLowerCase().includes(q) ||
+              String(row.closed_by).toLowerCase().includes(q) ||
+              String(row.id).includes(q)
+            )
+          : rows;
 
-          const filtered = q
-            ? rows.filter((row) =>
-                String(row.channel_name).toLowerCase().includes(q) ||
-                String(row.closed_by).toLowerCase().includes(q) ||
-                String(row.id).includes(q)
-              )
-            : rows;
-
-          const cards = filtered.length
-            ? filtered.map((row) => `
+        const cards = filtered.length
+          ? filtered.map((row) => `
               <div class="card">
                 <div>
                   <span class="pill">#${escapeHtml(row.id)}</span>
@@ -195,15 +200,15 @@ http
                   Closed by ${escapeHtml(row.closed_by)} • ${new Date(row.created_at).toLocaleString("en-GB")}
                 </div>
                 <div style="margin-top:12px;">
-                  <a href="/transcripts/${row.id}?key=${encodeURIComponent(urlObj.searchParams.get("key"))}">Open transcript</a>
+                  <a href="/transcripts/${row.id}?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">Open transcript</a>
                 </div>
               </div>
             `).join("")
-            : `<div class="card">No transcripts found.</div>`;
+          : `<div class="card">No transcripts found.</div>`;
 
-          const html = renderLayout(
-            "Transcripts",
-            `
+        const html = renderLayout(
+          "Transcripts",
+          `
             <div class="topbar">
               <div>
                 <h1>Ticket Transcripts</h1>
@@ -215,25 +220,30 @@ http
               </form>
             </div>
             ${cards}
-            `
-          );
+          `
+        );
 
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          return res.end(html);
+        return writeAndEnd(
+          req,
+          res,
+          startedAt,
+          200,
+          { "Content-Type": "text/html; charset=utf-8" },
+          html
+        );
+      }
+
+      const idMatch = pathname.match(/^\/transcripts\/(\d+)$/);
+      if (idMatch) {
+        const transcript = await db.getTranscriptById(Number(idMatch[1]));
+
+        if (!transcript) {
+          return writeAndEnd(req, res, startedAt, 404, { "Content-Type": "text/plain" }, "Transcript not found");
         }
 
-        const idMatch = pathname.match(/^\/transcripts\/(\d+)$/);
-        if (idMatch) {
-          const transcript = await db.getTranscriptById(Number(idMatch[1]));
-
-          if (!transcript) {
-            res.writeHead(404, { "Content-Type": "text/plain" });
-            return res.end("Transcript not found");
-          }
-
-          const html = renderLayout(
-            `Transcript #${transcript.id}`,
-            `
+        const html = renderLayout(
+          `Transcript #${transcript.id}`,
+          `
             <div class="topbar">
               <div>
                 <h1>Transcript #${escapeHtml(transcript.id)}</h1>
@@ -249,32 +259,38 @@ http
             </div>
 
             <pre>${escapeHtml(transcript.content)}</pre>
-            `
-          );
+          `
+        );
 
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          return res.end(html);
-        }
-
-        res.writeHead(404, { "Content-Type": "text/plain" });
-        return res.end("Not found");
+        return writeAndEnd(
+          req,
+          res,
+          startedAt,
+          200,
+          { "Content-Type": "text/html; charset=utf-8" },
+          html
+        );
       }
 
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("OK");
-    } catch (err) {
-      console.error("[web] route error:", err?.stack || err);
-      res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("Server error");
+      return writeAndEnd(req, res, startedAt, 404, { "Content-Type": "text/plain" }, "Not found");
     }
-  })
-  .listen(process.env.PORT || 3000, "0.0.0.0", () => {
-    console.log(`[boot] Keep-alive server running on port ${process.env.PORT || 3000}`);
-  });
+
+    return writeAndEnd(req, res, startedAt, 200, { "Content-Type": "text/plain" }, "OK");
+  } catch (err) {
+    console.error("[web] route error:", err?.stack || err);
+    return writeAndEnd(req, res, startedAt, 500, { "Content-Type": "text/plain" }, "Server error");
+  }
+});
+
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 121000;
+
+server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
+  console.log(`[boot] Keep-alive server running on port ${process.env.PORT || 3000}`);
+});
 
 async function loadDatabase() {
   console.log("[boot] Loading database.js");
-  const db = require("./database.js");
   await db.init();
   console.log("[boot] Database ready");
 }
@@ -572,7 +588,7 @@ async function boot() {
       loadCommands(client);
       loadEvents(client);
 
-      const result = await waitForReady(client, 30_000, 45_000);
+      await waitForReady(client, 30_000, 45_000);
 
       backoff.reset();
       console.log("[boot] Client is fully ready");
@@ -581,7 +597,6 @@ async function boot() {
       console.error("[boot] Login attempt failed:", err?.stack || err);
 
       let waitMs;
-
       const msg = String(err?.message || err || "").toLowerCase();
 
       if (msg.includes("429") || msg.includes("1015")) {
