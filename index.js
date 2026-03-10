@@ -16,56 +16,9 @@ const {
 const db = require("./database.js");
 
 
-
 /* -------------------------------------------------------------------------- */
-/* Boot logging                                                                */
+/* Runtime log capture                                                         */
 /* -------------------------------------------------------------------------- */
-
-console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-GATEWAY-DEBUG");
-
-process.on("uncaughtException", (err) => {
-  console.error("[fatal] uncaughtException:", err?.stack || err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("[fatal] unhandledRejection:", err?.stack || err);
-});
-
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value || !value.trim()) {
-    throw new Error(`[boot] Missing required env variable: ${name}`);
-  }
-  return value.trim();
-}
-
-const TOKEN = requireEnv("TOKEN");
-
-console.log("[boot] dotenv loaded");
-console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
-console.log("[boot] PORT:", process.env.PORT || "not set");
-console.log("[boot] MESSAGE_CONTENT_INTENT_REQUIRED:", true);
-
-
-
-/* -------------------------------------------------------------------------- */
-/* Runtime status + log buffer                                                 */
-/* -------------------------------------------------------------------------- */
-
-const botStatus = {
-  state: "starting",
-  startedAt: new Date().toISOString(),
-  lastLoginAttempt: null,
-  lastReady: null,
-  lastDisconnect: null,
-  lastError: null,
-  lastWarn: null,
-  lastDebug: null
-};
-
-function updateStatus(patch) {
-  Object.assign(botStatus, patch);
-}
 
 const runtimeLogs = [];
 const MAX_RUNTIME_LOGS = 300;
@@ -91,25 +44,125 @@ function addRuntimeLog(level, args) {
   }
 }
 
-const originalLog = console.log.bind(console);
-const originalWarn = console.warn.bind(console);
-const originalError = console.error.bind(console);
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleWarn = console.warn.bind(console);
+const originalConsoleError = console.error.bind(console);
 
 console.log = (...args) => {
   addRuntimeLog("log", args);
-  originalLog(...args);
+  originalConsoleLog(...args);
 };
 
 console.warn = (...args) => {
   addRuntimeLog("warn", args);
-  originalWarn(...args);
+  originalConsoleWarn(...args);
 };
 
 console.error = (...args) => {
   addRuntimeLog("error", args);
-  originalError(...args);
+  originalConsoleError(...args);
 };
 
+
+/* -------------------------------------------------------------------------- */
+/* Boot logging                                                                */
+/* -------------------------------------------------------------------------- */
+
+console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-GATEWAY-DEBUG-NOTIFY-COOLDOWN");
+
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaughtException:", err?.stack || err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("[fatal] unhandledRejection:", err?.stack || err);
+});
+
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value || !value.trim()) {
+    throw new Error(`[boot] Missing required env variable: ${name}`);
+  }
+  return value.trim();
+}
+
+const TOKEN = requireEnv("TOKEN");
+
+/* hardcoded temporarily because you can't access Render env right now */
+const ADMIN_USER_ID = "261265820678619137";
+
+console.log("[boot] dotenv loaded");
+console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
+console.log("[boot] PORT:", process.env.PORT || "not set");
+console.log("[boot] MESSAGE_CONTENT_INTENT_REQUIRED:", true);
+
+
+/* -------------------------------------------------------------------------- */
+/* Runtime status                                                              */
+/* -------------------------------------------------------------------------- */
+
+const botStatus = {
+  state: "starting",
+  startedAt: new Date().toISOString(),
+  lastLoginAttempt: null,
+  lastReady: null,
+  lastDisconnect: null,
+  lastError: null,
+  lastWarn: null,
+  lastDebug: null
+};
+
+function updateStatus(patch) {
+  Object.assign(botStatus, patch);
+}
+
+function isoNow() {
+  return new Date().toISOString();
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* DM notifications with cooldown                                              */
+/* -------------------------------------------------------------------------- */
+
+const notificationCooldowns = new Map();
+const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000;
+
+function canSendNotification(key) {
+  const now = Date.now();
+  const last = notificationCooldowns.get(key) || 0;
+
+  if (now - last < NOTIFY_COOLDOWN_MS) {
+    return false;
+  }
+
+  notificationCooldowns.set(key, now);
+  return true;
+}
+
+async function sendAdminDm(client, title, lines = [], options = {}) {
+  const cooldownKey = options.cooldownKey || title;
+  const bypassCooldown = options.bypassCooldown === true;
+
+  if (!bypassCooldown && !canSendNotification(cooldownKey)) {
+    console.log(`[notify] Cooldown active, skipped DM: ${title}`);
+    return;
+  }
+
+  try {
+    const user = await client.users.fetch(ADMIN_USER_ID);
+
+    const content = [
+      `**${title}**`,
+      ...lines
+    ].join("\n");
+
+    await user.send(content);
+    console.log(`[notify] DM sent: ${title}`);
+  } catch (err) {
+    console.warn(`[notify] Failed to send DM: ${title}`, err?.message || err);
+  }
+}
 
 
 /* -------------------------------------------------------------------------- */
@@ -125,62 +178,39 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
-function renderLayout(title, body) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml(title)}</title>
-<style>
-body{background:#0b0b0f;color:#f3f3f5;font-family:Inter,Arial,sans-serif;padding:24px}
-.wrap{max-width:1100px;margin:0 auto}
-.card{background:#14141b;border:1px solid #262633;border-radius:12px;padding:16px;margin-bottom:14px}
-.meta{color:#a7a7b5;font-size:14px;margin-top:6px}
-a{color:#9bb8ff;text-decoration:none}
-a:hover{text-decoration:underline}
-pre{background:#101017;padding:16px;border-radius:10px;white-space:pre-wrap;word-break:break-word}
-input{width:100%;max-width:420px;padding:10px;border-radius:8px;border:1px solid #2d2d3a;background:#101017;color:#f3f3f5}
-</style>
-</head>
-<body>
-<div class="wrap">
-${body}
-</div>
-</body>
-</html>`;
-}
-
 function isTranscriptAuthorised(urlObj) {
   const expected = process.env.TRANSCRIPT_VIEW_KEY;
   if (!expected) return false;
   return urlObj.searchParams.get("key") === expected;
 }
 
-
-/* -------------------------------------------------------------------------- */
-/* Web server                                                                  */
-/* -------------------------------------------------------------------------- */
-
-
-
 function statusTone(state) {
   switch (state) {
-    case "ready": return { label: "READY", color: "#3fb950" };
-    case "logging_in": return { label: "LOGGING IN", color: "#d29922" };
-    case "login_stalled": return { label: "LOGIN STALLED", color: "#f85149" };
-    case "reconnecting": return { label: "RECONNECTING", color: "#d29922" };
-    case "disconnected": return { label: "DISCONNECTED", color: "#f85149" };
-    case "startup_failed": return { label: "STARTUP FAILED", color: "#f85149" };
-    default: return { label: String(state || "UNKNOWN").toUpperCase(), color: "#8b949e" };
+    case "ready":
+      return { label: "READY", color: "#3fb950" };
+    case "logging_in":
+      return { label: "LOGGING IN", color: "#d29922" };
+    case "login_stalled":
+      return { label: "LOGIN STALLED", color: "#f85149" };
+    case "reconnecting":
+      return { label: "RECONNECTING", color: "#d29922" };
+    case "disconnected":
+      return { label: "DISCONNECTED", color: "#f85149" };
+    case "startup_failed":
+      return { label: "STARTUP FAILED", color: "#f85149" };
+    default:
+      return { label: String(state || "UNKNOWN").toUpperCase(), color: "#8b949e" };
   }
 }
 
 function levelTone(level) {
   switch (level) {
-    case "error": return "#f85149";
-    case "warn": return "#d29922";
-    default: return "#3b82f6";
+    case "error":
+      return "#f85149";
+    case "warn":
+      return "#d29922";
+    default:
+      return "#3b82f6";
   }
 }
 
@@ -356,6 +386,15 @@ pre{
   padding:14px;
   margin:0;
 }
+input{
+  width:100%;
+  max-width:420px;
+  padding:10px;
+  border-radius:8px;
+  border:1px solid #2d2d3a;
+  background:#101017;
+  color:#f3f3f5;
+}
 @media (max-width: 900px){
   .kpi{ grid-column:span 6; }
 }
@@ -430,7 +469,7 @@ function renderStatusPage() {
 
       <div class="card kpi">
         <div class="kpi-label">Now</div>
-        <div class="kpi-value code">${escapeHtml(new Date().toISOString())}</div>
+        <div class="kpi-value code">${escapeHtml(isoNow())}</div>
       </div>
 
       <div class="card">
@@ -477,6 +516,11 @@ function renderLogsPage() {
   `);
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Web server                                                                  */
+/* -------------------------------------------------------------------------- */
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const urlObj = new URL(req.url, `http://${req.headers.host}`);
@@ -504,7 +548,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         service: "feds-agent",
         bot: botStatus,
-        now: new Date().toISOString()
+        now: isoNow()
       }, null, 2));
       console.log(`[web] finished in ${Date.now() - started}ms`);
       return;
@@ -523,7 +567,7 @@ const server = http.createServer(async (req, res) => {
         service: "feds-agent",
         count: runtimeLogs.length,
         logs: runtimeLogs,
-        now: new Date().toISOString()
+        now: isoNow()
       }, null, 2));
       console.log(`[web] finished in ${Date.now() - started}ms`);
       return;
@@ -649,6 +693,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 121000;
+
+server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
+  console.log(`[boot] Web server running on ${process.env.PORT || 3000}`);
+});
 
 
 /* -------------------------------------------------------------------------- */
@@ -660,7 +710,6 @@ async function loadDatabase() {
   await db.init();
   console.log("[boot] Database ready");
 }
-
 
 
 /* -------------------------------------------------------------------------- */
@@ -691,7 +740,6 @@ function loadCommands(client) {
     console.log(`[commands] loaded ${command.data.name}`);
   }
 }
-
 
 
 /* -------------------------------------------------------------------------- */
@@ -729,7 +777,6 @@ function loadEvents(client) {
 }
 
 
-
 /* -------------------------------------------------------------------------- */
 /* Discord bot                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -751,10 +798,10 @@ async function startBot() {
 
   client.commands = new Collection();
 
-  client.once("ready", () => {
+  client.once("ready", async () => {
     updateStatus({
       state: "ready",
-      lastReady: new Date().toISOString()
+      lastReady: isoNow()
     });
 
     console.log(`[ready] Logged in as ${client.user.tag}`);
@@ -770,13 +817,21 @@ async function startBot() {
     });
 
     console.log("[ready] Presence set");
+
+    await sendAdminDm(client, "🟢 Feds Agent Online", [
+      `Bot: ${client.user.tag}`,
+      `Time: ${isoNow()}`,
+      `State: READY`
+    ], {
+      cooldownKey: "ready"
+    });
   });
 
-  client.on("shardDisconnect", (e) => {
+  client.on("shardDisconnect", async (e) => {
     updateStatus({
       state: "disconnected",
       lastDisconnect: {
-        time: new Date().toISOString(),
+        time: isoNow(),
         code: e?.code ?? null,
         reason: e?.reason ?? null,
         wasClean: e?.wasClean ?? null
@@ -784,11 +839,27 @@ async function startBot() {
     });
 
     console.warn("[gateway] disconnect", e?.code, e?.reason);
+
+    await sendAdminDm(client, "🔴 Feds Agent Disconnected", [
+      `Time: ${isoNow()}`,
+      `Code: ${e?.code ?? "unknown"}`,
+      `Reason: ${e?.reason ?? "unknown"}`,
+      `Was Clean: ${String(e?.wasClean ?? false)}`
+    ], {
+      cooldownKey: "disconnect"
+    });
   });
 
-  client.on("shardReconnecting", () => {
+  client.on("shardReconnecting", async () => {
     updateStatus({ state: "reconnecting" });
     console.log("[gateway] reconnecting...");
+
+    await sendAdminDm(client, "🟠 Feds Agent Reconnecting", [
+      `Time: ${isoNow()}`,
+      `State: RECONNECTING`
+    ], {
+      cooldownKey: "reconnecting"
+    });
   });
 
   client.on("shardResume", (id, replayedEvents) => {
@@ -802,7 +873,7 @@ async function startBot() {
   client.on("error", (err) => {
     updateStatus({
       lastError: {
-        time: new Date().toISOString(),
+        time: isoNow(),
         error: err?.stack || String(err)
       }
     });
@@ -813,7 +884,7 @@ async function startBot() {
   client.on("warn", (msg) => {
     updateStatus({
       lastWarn: {
-        time: new Date().toISOString(),
+        time: isoNow(),
         warn: String(msg)
       }
     });
@@ -835,7 +906,7 @@ async function startBot() {
     ) {
       updateStatus({
         lastDebug: {
-          time: new Date().toISOString(),
+          time: isoNow(),
           message: text
         }
       });
@@ -849,20 +920,28 @@ async function startBot() {
 
   updateStatus({
     state: "logging_in",
-    lastLoginAttempt: new Date().toISOString()
+    lastLoginAttempt: isoNow()
   });
 
-  setTimeout(() => {
+  setTimeout(async () => {
     if (botStatus.state === "logging_in" && !botStatus.lastReady) {
       updateStatus({
         state: "login_stalled",
         lastWarn: {
-          time: new Date().toISOString(),
+          time: isoNow(),
           warn: "Login has not reached ready after 45 seconds"
         }
       });
 
       console.warn("[boot] Login has not reached ready after 45 seconds");
+
+      await sendAdminDm(client, "🟡 Feds Agent Login Stalled", [
+        `Time: ${isoNow()}`,
+        `State: LOGIN_STALLED`,
+        `Last Debug: ${botStatus.lastDebug?.message || "none"}`
+      ], {
+        cooldownKey: "login_stalled"
+      });
     }
   }, 45000);
 
@@ -871,15 +950,34 @@ async function startBot() {
   await client.login(TOKEN);
 }
 
-startBot().catch((err) => {
+startBot().catch(async (err) => {
   updateStatus({
     state: "startup_failed",
     lastError: {
-      time: new Date().toISOString(),
+      time: isoNow(),
       error: err?.stack || String(err)
     }
   });
 
   console.error("[fatal] bot failed:", err?.stack || err);
+
+  try {
+    const tempClient = new Client({
+      intents: [GatewayIntentBits.Guilds]
+    });
+
+    await tempClient.login(TOKEN);
+
+    await sendAdminDm(tempClient, "💥 Feds Agent Startup Failed", [
+      `Time: ${isoNow()}`,
+      `Error: ${err?.message || String(err)}`
+    ], {
+      cooldownKey: "startup_failed",
+      bypassCooldown: true
+    });
+
+    await tempClient.destroy();
+  } catch (_) {}
+
   process.exit(1);
 });
