@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -16,30 +17,24 @@ import {
   type TextChannel
 } from "discord.js";
 import * as db from "../database";
-import { buildEmbedLikeContainer } from "../lib/componentsV2";
 import type { TicketRow } from "../database";
 
-/** Rebuild the open-ticket V2 container (for re-sending when editing message after claim/escalate). */
-function buildOpenTicketContainer(
+/** Rebuild the open-ticket embed (for re-sending when editing message after claim/escalate). */
+function buildOpenTicketEmbed(
   ticket: TicketRow,
   openerTag: string,
-  meta: { emoji: string; label: string; color: number; guidance?: string },
-  supportRoleIds: string[]
-): ReturnType<typeof buildEmbedLikeContainer> {
-  const mentionLine =
-    supportRoleIds.length > 0
-      ? supportRoleIds.map((id) => `<@&${id}>`).join(" ") + "\n\n"
-      : "";
-  const guidance = meta.guidance ?? "";
-  return buildEmbedLikeContainer({
-    title: `${meta.emoji} ${meta.label}`,
-    description:
-      mentionLine +
+  meta: { emoji: string; label: string; color: number; guidance?: string }
+): EmbedBuilder {
+  const guidance = (meta as { guidance?: string }).guidance ?? "";
+  return new EmbedBuilder()
+    .setTitle(`${meta.emoji} ${meta.label}`)
+    .setDescription(
       `Welcome <@${ticket.user_id}>, thanks for reaching out.\n\n` +
-      `A staff member will assist you soon.\n\n` +
-      `> Press **Close Ticket** below if your issue is resolved.\n\n` +
-      (guidance ? `${guidance}` : ""),
-    fields: [
+        `A staff member will assist you soon.\n\n` +
+        `> Press **Close Ticket** below if your issue is resolved.\n\n` +
+        (guidance ? `${guidance}` : "")
+    )
+    .addFields(
       { name: "Ticket ID", value: `#${ticket.id}`, inline: true },
       { name: "Category", value: meta.label, inline: true },
       {
@@ -48,11 +43,10 @@ function buildOpenTicketContainer(
         inline: false
       },
       { name: "Feds URL", value: ticket.feds_url ?? "", inline: false }
-    ],
-    color: meta.color,
-    footer: `Opened by ${openerTag}`,
-    timestamp: true
-  });
+    )
+    .setColor(meta.color)
+    .setFooter({ text: `Opened by ${openerTag}` })
+    .setTimestamp();
 }
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
@@ -149,18 +143,18 @@ async function sendLog(
     (await guild.channels.fetch(logId).catch(() => null));
   if (!logChannel || !logChannel.isTextBased()) return;
 
-  const container = buildEmbedLikeContainer({
-    title: `Ticket ${action}`,
-    fields: [
+  const embed = new EmbedBuilder()
+    .setTitle(`Ticket ${action}`)
+    .addFields(
       { name: "User", value: `${user.tag} (${user.id})`, inline: true },
-      { name: "Channel", value: channelName, inline: true },
-      ...(category ? [{ name: "Category", value: category, inline: true }] : [])
-    ],
-    color: action === "Opened" ? 0x57f287 : 0xed4245,
-    timestamp: true
-  });
+      { name: "Channel", value: channelName, inline: true }
+    )
+    .setColor(action === "Opened" ? 0x57f287 : 0xed4245)
+    .setTimestamp();
 
-  logChannel.send({ flags: MessageFlags.IsComponentsV2, components: [container] }).catch(() => {});
+  if (category) embed.addFields({ name: "Category", value: category, inline: true });
+
+  logChannel.send({ embeds: [embed] }).catch(() => {});
 }
 
 function isSupportMember(interaction: Interaction): boolean {
@@ -467,28 +461,23 @@ const event = {
       ticketCooldowns.set(user.id, now);
 
       const guidance = (meta as { guidance?: string }).guidance ?? "";
-      const mentionLine =
-        supportRoleIds.length > 0
-          ? supportRoleIds.map((id) => `<@&${id}>`).join(" ") + "\n\n"
-          : "";
-      const openContainer = buildEmbedLikeContainer({
-        title: `${meta.emoji} ${meta.label}`,
-        description:
-          mentionLine +
+      const openEmbed = new EmbedBuilder()
+        .setTitle(`${meta.emoji} ${meta.label}`)
+        .setDescription(
           `Welcome ${user}, thanks for reaching out.\n\n` +
-          `A staff member will assist you soon.\n\n` +
-          `> Press **Close Ticket** below if your issue is resolved.\n\n` +
-          (guidance ? `${guidance}` : ""),
-        fields: [
+            `A staff member will assist you soon.\n\n` +
+            `> Press **Close Ticket** below if your issue is resolved.\n\n` +
+            (guidance ? `${guidance}` : "")
+        )
+        .addFields(
           { name: "Ticket ID", value: `#${ticketRecord.id}`, inline: true },
           { name: "Category", value: meta.label, inline: true },
           { name: "Brief Description", value: briefDescription, inline: false },
           { name: "Feds URL", value: fedsUrl, inline: false }
-        ],
-        color: meta.color,
-        footer: `Opened by ${user.tag}`,
-        timestamp: true
-      });
+        )
+        .setColor(meta.color)
+        .setFooter({ text: `Opened by ${user.tag}` })
+        .setTimestamp();
 
       const closeBtn = new ButtonBuilder()
         .setCustomId(`ticket_close_${user.id}`)
@@ -514,9 +503,14 @@ const event = {
         escalateBtn
       );
 
+      const mentionContent = supportRoleIds.length
+        ? supportRoleIds.map((id) => `<@&${id}>`).join(" ")
+        : undefined;
+
       await ticketChannel.send({
-        flags: MessageFlags.IsComponentsV2,
-        components: [openContainer, row]
+        content: mentionContent,
+        embeds: [openEmbed],
+        components: [row]
       });
 
       await sendLog(guild, ticketChannel.name, user, "Opened", meta.label);
@@ -562,17 +556,17 @@ const event = {
         .fetch({ limit: 10 })
         .then((msgs) =>
           msgs.find((m) =>
-            (m.components?.[1] as any)?.components?.some((c: any) =>
+            (m.components?.[0] as any)?.components?.some((c: any) =>
               c.customId?.startsWith("ticket_claim_")
             )
           )
         )
         .catch(() => null);
 
-      if (msg && msg.components?.length >= 2) {
+      if (msg?.components?.length) {
         const ticket = await db.getTicketByChannel(channel.id);
         const meta = ticket && (CATEGORY_META as any)[ticket.category_key];
-        const updatedRow: any = ActionRowBuilder.from(msg.components[1] as any);
+        const updatedRow: any = ActionRowBuilder.from(msg.components[0] as any);
         (updatedRow.components as any[]).forEach((btn: any) => {
           if (btn.data?.custom_id?.startsWith("ticket_claim_")) btn.setDisabled(true);
           if (
@@ -582,15 +576,9 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        const payload: any = {
-          flags: MessageFlags.IsComponentsV2,
-          components: [updatedRow]
-        };
+        const payload: any = { components: [updatedRow] };
         if (ticket && meta) {
-          payload.components = [
-            buildOpenTicketContainer(ticket, ticket.username, meta, SUPPORT_ROLE_IDS),
-            updatedRow
-          ];
+          payload.embeds = [buildOpenTicketEmbed(ticket, ticket.username, meta)];
         }
         await msg.edit(payload).catch(() => {});
       }
@@ -640,17 +628,17 @@ const event = {
         .fetch({ limit: 10 })
         .then((msgs) =>
           msgs.find((m) =>
-            (m.components?.[1] as any)?.components?.some((c: any) =>
+            (m.components?.[0] as any)?.components?.some((c: any) =>
               c.customId?.startsWith("ticket_escalate_")
             )
           )
         )
         .catch(() => null);
 
-      if (msg && msg.components?.length >= 2) {
+      if (msg?.components?.length) {
         const ticket = await db.getTicketByChannel(channel.id);
         const meta = ticket && (CATEGORY_META as any)[ticket.category_key];
-        const updatedRow: any = ActionRowBuilder.from(msg.components[1] as any);
+        const updatedRow: any = ActionRowBuilder.from(msg.components[0] as any);
         (updatedRow.components as any[]).forEach((btn: any) => {
           if (btn.data?.custom_id?.startsWith("ticket_escalate_")) {
             btn.setDisabled(true);
@@ -662,15 +650,9 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        const payload: any = {
-          flags: MessageFlags.IsComponentsV2,
-          components: [updatedRow]
-        };
+        const payload: any = { components: [updatedRow] };
         if (ticket && meta) {
-          payload.components = [
-            buildOpenTicketContainer(ticket, ticket.username, meta, SUPPORT_ROLE_IDS),
-            updatedRow
-          ];
+          payload.embeds = [buildOpenTicketEmbed(ticket, ticket.username, meta)];
         }
         await msg.edit(payload).catch(() => {});
       }
@@ -704,12 +686,12 @@ const event = {
         });
       }
 
-      const confirmContainer = buildEmbedLikeContainer({
-        title: "Close Ticket?",
-        description:
-          "Are you sure you want to close this ticket? This cannot be undone.",
-        color: 0x4240ae
-      });
+      const confirmEmbed = new EmbedBuilder()
+        .setTitle("Close Ticket?")
+        .setDescription(
+          "Are you sure you want to close this ticket? This cannot be undone."
+        )
+        .setColor(0x4240ae);
 
       const confirmBtn = new ButtonBuilder()
         .setCustomId(`ticket_confirm_close_${ticketOwnerId}`)
@@ -734,8 +716,9 @@ const event = {
       );
 
       return button.reply({
-        flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
-        components: [confirmContainer, row]
+        embeds: [confirmEmbed],
+        components: [row],
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -817,9 +800,9 @@ const event = {
             (await guild.channels.fetch(logId).catch(() => null));
 
           if (logChannel?.isTextBased()) {
-            const logContainer = buildEmbedLikeContainer({
-              title: "Transcript Saved",
-              fields: [
+            const logEmbed = new EmbedBuilder()
+              .setTitle("Transcript Saved")
+              .addFields(
                 { name: "Channel", value: channel.name, inline: true },
                 { name: "Saved By", value: user.tag, inline: true },
                 {
@@ -837,23 +820,19 @@ const event = {
                   name: "Feds URL",
                   value: ticket.feds_url?.slice(0, 1024) || "N/A",
                   inline: false
-                },
-                ...(renderTranscriptUrl
-                  ? [
-                      {
-                        name: "Dashboard Transcript",
-                        value: `[Open in Render dashboard](${renderTranscriptUrl})`
-                      }
-                    ]
-                  : [])
-              ],
-              color: 0x4240ae,
-              timestamp: true
-            });
+                }
+              )
+              .setColor(0x4240ae)
+              .setTimestamp();
 
-            await logChannel
-              .send({ flags: MessageFlags.IsComponentsV2, components: [logContainer] })
-              .catch(() => {});
+            if (renderTranscriptUrl) {
+              logEmbed.addFields({
+                name: "Dashboard Transcript",
+                value: `[Open in Render dashboard](${renderTranscriptUrl})`
+              });
+            }
+
+            await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
           }
         }
 
@@ -883,17 +862,15 @@ const event = {
         dbTicket?.user_id ||
         button.customId.replace("ticket_confirm_close_", "");
 
-      const closeContainer = buildEmbedLikeContainer({
-        title: "Ticket Closed",
-        description: `Closed by ${user}. This channel will be deleted in **5 seconds**.`,
-        color: 0x4240ae,
-        timestamp: true
-      });
+      const closeEmbed = new EmbedBuilder()
+        .setTitle("Ticket Closed")
+        .setDescription(
+          `Closed by ${user}. This channel will be deleted in **5 seconds**.`
+        )
+        .setColor(0x4240ae)
+        .setTimestamp();
 
-      await channel.send({
-        flags: MessageFlags.IsComponentsV2,
-        components: [closeContainer]
-      });
+      await channel.send({ embeds: [closeEmbed] });
 
       claimedTickets.delete(channel.id);
       escalatedTickets.delete(channel.id);
@@ -908,13 +885,10 @@ const event = {
       interaction.customId === "ticket_cancel_close"
     ) {
       const button = interaction as ButtonInteraction;
-      const cancelContainer = buildEmbedLikeContainer({
-        description: "Ticket closure cancelled.",
-        color: 0x4240ae
-      });
       return button.update({
-        flags: MessageFlags.IsComponentsV2,
-        components: [cancelContainer]
+        content: "Ticket closure cancelled.",
+        embeds: [],
+        components: []
       });
     }
   }

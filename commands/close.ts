@@ -1,10 +1,10 @@
 import {
+  EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder
 } from "discord.js";
 import * as db from "../database";
-import { buildEmbedLikeContainer } from "../lib/componentsV2";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -73,17 +73,15 @@ const command = {
       });
     }
 
-    const closeContainer = buildEmbedLikeContainer({
-      title: "Ticket Closed",
-      description: `Closed by ${user}. This channel will be deleted in **5 seconds**.`,
-      color: 0x4240ae,
-      timestamp: true
-    });
+    const closeEmbed = new EmbedBuilder()
+      .setTitle("Ticket Closed")
+      .setDescription(
+        `Closed by ${user}. This channel will be deleted in **5 seconds**.`
+      )
+      .setColor(0x4240ae)
+      .setTimestamp();
 
-    await interaction.reply({
-      flags: MessageFlags.IsComponentsV2,
-      components: [closeContainer]
-    });
+    await interaction.reply({ embeds: [closeEmbed] });
 
     let savedTranscript: Awaited<ReturnType<typeof db.saveTranscript>> | null = null;
     let renderTranscriptUrl: string | null = null;
@@ -127,9 +125,9 @@ const command = {
           (await guild.channels.fetch(logId).catch(() => null));
 
         if (logChannel?.isTextBased()) {
-          const logContainer = buildEmbedLikeContainer({
-            title: "Transcript Saved",
-            fields: [
+          const logEmbed = new EmbedBuilder()
+            .setTitle("Transcript Saved")
+            .addFields(
               { name: "Channel", value: channel.name, inline: true },
               { name: "Closed By", value: user.tag, inline: true },
               {
@@ -147,23 +145,19 @@ const command = {
                 name: "Feds URL",
                 value: ticket.feds_url?.slice(0, 1024) || "N/A",
                 inline: false
-              },
-              ...(renderTranscriptUrl
-                ? [
-                    {
-                      name: "Dashboard Transcript",
-                      value: `[Open in Render dashboard](${renderTranscriptUrl})`
-                    }
-                  ]
-                : [])
-            ],
-            color: 0x4240ae,
-            timestamp: true
-          });
+              }
+            )
+            .setColor(0x4240ae)
+            .setTimestamp();
 
-          await logChannel
-            .send({ flags: MessageFlags.IsComponentsV2, components: [logContainer] })
-            .catch(() => {});
+          if (renderTranscriptUrl) {
+            logEmbed.addFields({
+              name: "Dashboard Transcript",
+              value: `[Open in Render dashboard](${renderTranscriptUrl})`
+            });
+          }
+
+          await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
         }
       }
     } catch (e) {

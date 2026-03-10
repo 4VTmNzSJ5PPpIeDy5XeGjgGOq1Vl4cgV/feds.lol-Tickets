@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -7,7 +8,6 @@ import {
   StringSelectMenuOptionBuilder,
   type ChatInputCommandInteraction
 } from "discord.js";
-import { buildPanelLikeContainer } from "../lib/componentsV2";
 
 const PANEL_IMAGE_URL =
   "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png?ex=69b05015&is=69aefe95&hm=f45315fbba3cf03f400f245d90371201959632c3a56234d2c651415c62b11ab7&";
@@ -21,16 +21,15 @@ const command = {
   async execute(interaction: ChatInputCommandInteraction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const container = buildPanelLikeContainer(
-      "Assistance and Support",
-      "Please create a ticket using the menu below if you require any help. " +
-        "Tickets are private and designed to aid you — without the hassle of relying on direct messages.",
-      {
-        color: 0x4240ae,
-        imageUrl: PANEL_IMAGE_URL,
-        footer: "feds.lol Support • support@feds.lol"
-      }
-    );
+    const embed = new EmbedBuilder()
+      .setTitle("Assistance and Support")
+      .setDescription(
+        "Please create a ticket using the menu below if you require any help. " +
+          "Tickets are private and designed to aid you — without the hassle of relying on direct messages."
+      )
+      .setColor(0x4240ae)
+      .setFooter({ text: "feds.lol Support • support@feds.lol" })
+      .setImage(PANEL_IMAGE_URL);
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId("ticket_open")
@@ -73,8 +72,8 @@ const command = {
     }
 
     await (interaction.channel as any).send({
-      flags: MessageFlags.IsComponentsV2,
-      components: [container, row]
+      embeds: [embed],
+      components: [row]
     });
 
     await interaction.editReply({ content: "Panel sent!" });
