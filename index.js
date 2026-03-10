@@ -304,14 +304,14 @@ async function startBot(){
     console.log(`[ready] Logged in as ${client.user.tag}`);
 
     client.user.setPresence({
-      status:"idle",
-      activities:[
-        {
-          name:"feds.lol support",
-          type:ActivityType.Watching
-        }
-      ]
-    });
+  status: "dnd",
+  activities: [
+    {
+      name: "classified operations",
+      type: ActivityType.Watching
+    }
+  ]
+});
 
     console.log("[ready] Presence set");
   });
