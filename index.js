@@ -15,7 +15,7 @@ const {
 
 const db = require("./database.js");
 
-console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT");
+console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-STATUS");
 
 process.on("uncaughtException", err => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -39,6 +39,26 @@ console.log("[boot] dotenv loaded");
 console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
 console.log("[boot] PORT:", process.env.PORT || "not set");
 
+
+/*
+|--------------------------------------------------------------------------
+| Bot status tracker
+|--------------------------------------------------------------------------
+*/
+
+const botStatus = {
+  state: "starting",
+  startedAt: new Date().toISOString(),
+  lastLoginAttempt: null,
+  lastReady: null,
+  lastDisconnect: null,
+  lastError: null,
+  lastWarn: null
+};
+
+function updateStatus(patch) {
+  Object.assign(botStatus, patch);
+}
 
 
 /*
@@ -83,10 +103,9 @@ function isAuthorised(urlObj) {
 }
 
 
-
 /*
 |--------------------------------------------------------------------------
-| Transcript Web Dashboard
+| Web server
 |--------------------------------------------------------------------------
 */
 
@@ -103,6 +122,15 @@ const server = http.createServer(async (req,res) => {
     if (pathname === "/healthz") {
       res.writeHead(200);
       return res.end("ok");
+    }
+
+    if (pathname === "/status") {
+      res.writeHead(200,{"Content-Type":"application/json"});
+      return res.end(JSON.stringify({
+        service:"feds-agent",
+        bot:botStatus,
+        now:new Date().toISOString()
+      },null,2));
     }
 
     if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
@@ -182,7 +210,6 @@ server.listen(process.env.PORT || 3000,"0.0.0.0",()=>{
 });
 
 
-
 /*
 |--------------------------------------------------------------------------
 | Database
@@ -194,7 +221,6 @@ async function loadDatabase(){
   await db.init();
   console.log("[boot] Database ready");
 }
-
 
 
 /*
@@ -231,7 +257,6 @@ function loadCommands(client){
     console.log(`[commands] loaded ${command.data.name}`);
   }
 }
-
 
 
 /*
@@ -274,7 +299,6 @@ function loadEvents(client){
 }
 
 
-
 /*
 |--------------------------------------------------------------------------
 | Discord Bot
@@ -301,48 +325,86 @@ async function startBot(){
 
   client.once("ready",()=>{
 
+    updateStatus({
+      state:"ready",
+      lastReady:new Date().toISOString()
+    });
+
     console.log(`[ready] Logged in as ${client.user.tag}`);
 
     client.user.setPresence({
-  status: "dnd",
-  activities: [
-    {
-      name: "classified operations",
-      type: ActivityType.Watching
-    }
-  ]
-});
+      status:"dnd",
+      activities:[
+        {
+          name:"classified operations",
+          type:ActivityType.Watching
+        }
+      ]
+    });
 
     console.log("[ready] Presence set");
   });
 
   client.on("shardDisconnect",e=>{
+    updateStatus({
+      state:"disconnected",
+      lastDisconnect:{
+        time:new Date().toISOString(),
+        code:e?.code,
+        reason:e?.reason
+      }
+    });
+
     console.warn("[gateway] disconnect",e?.code,e?.reason);
   });
 
   client.on("shardReconnecting",()=>{
+    updateStatus({state:"reconnecting"});
     console.log("[gateway] reconnecting...");
   });
 
   client.on("error",err=>{
+    updateStatus({
+      lastError:{
+        time:new Date().toISOString(),
+        error:String(err)
+      }
+    });
     console.error("[client error]",err);
   });
 
   client.on("warn",msg=>{
+    updateStatus({
+      lastWarn:{
+        time:new Date().toISOString(),
+        warn:String(msg)
+      }
+    });
     console.warn("[client warn]",msg);
   });
 
   loadCommands(client);
   loadEvents(client);
 
+  updateStatus({
+    state:"logging_in",
+    lastLoginAttempt:new Date().toISOString()
+  });
+
   console.log("[boot] Logging into Discord...");
 
   await client.login(TOKEN);
 }
 
-
-
 startBot().catch(err=>{
+  updateStatus({
+    state:"startup_failed",
+    lastError:{
+      time:new Date().toISOString(),
+      error:String(err)
+    }
+  });
+
   console.error("[fatal] bot failed:",err?.stack || err);
   process.exit(1);
 });
