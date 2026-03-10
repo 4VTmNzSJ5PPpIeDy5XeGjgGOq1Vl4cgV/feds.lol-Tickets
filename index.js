@@ -170,7 +170,7 @@ async function main() {
     try {
       client.user.setActivity("feds.lol", {
         type: ActivityType.Streaming,
-        url: "https://www.twitch.tv/twitch"
+        url: "https://www.feds.lol/register"
       });
       console.log("[ready] Activity set");
     } catch (err) {
