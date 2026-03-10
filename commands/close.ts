@@ -1,20 +1,26 @@
-const {
-  SlashCommandBuilder,
-  EmbedBuilder,
+import {
+  MessageFlags,
   PermissionFlagsBits,
-} = require("discord.js");
-const db = require("../database.js");
+  SlashCommandBuilder
+} from "discord.js";
+import * as db from "../database";
+import { buildEmbedLikeContainer } from "../lib/componentsV2";
 
-const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
+const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
-async function fetchAllMessages(channel, batchSize = 100, maxMessages = 5000) {
-  const all = [];
-  let lastId;
+async function fetchAllMessages(
+  channel: any,
+  batchSize = 100,
+  maxMessages = 5000
+): Promise<any[]> {
+  const all: any[] = [];
+  let lastId: string | undefined;
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
-    const options = { limit: batchSize };
+    const options: { limit: number; before?: string } = { limit: batchSize };
     if (lastId) options.before = lastId;
 
     const batch = await channel.messages.fetch(options);
@@ -34,56 +40,70 @@ async function fetchAllMessages(channel, batchSize = 100, maxMessages = 5000) {
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 }
 
-module.exports = {
+const command = {
   data: new SlashCommandBuilder()
     .setName("close")
     .setDescription("Close the current ticket."),
 
-  async execute(interaction) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async execute(interaction: any) {
     const { channel, guild, member, user } = interaction;
+    if (!channel || !guild || !member) return;
+    if (!channel.isTextBased() || channel.isDMBased()) return;
 
     const ticket = await db.getTicketByChannel(channel.id);
 
     if (!ticket || ticket.status !== "open") {
       return interaction.reply({
         content: "This command can only be used inside an open ticket.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral
       });
     }
 
-    const isSupport = SUPPORT_ROLE_IDS.some((id) => member.roles.cache.has(id));
-    const isAdmin = member.permissions.has(PermissionFlagsBits.ManageChannels);
+    const isSupport = SUPPORT_ROLE_IDS.some((id) =>
+      member.roles?.cache?.has(id)
+    );
+    const isAdmin = member.permissions?.has(PermissionFlagsBits.ManageChannels);
     const isOwner = user.id === ticket.user_id;
 
     if (!isOwner && !isSupport && !isAdmin) {
       return interaction.reply({
         content: "You don't have permission to close this ticket.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral
       });
     }
 
-    const closeEmbed = new EmbedBuilder()
-      .setTitle("Ticket Closed")
-      .setDescription(`Closed by ${user}. This channel will be deleted in **5 seconds**.`)
-      .setColor(0x4240ae)
-      .setTimestamp();
+    const closeContainer = buildEmbedLikeContainer({
+      title: "Ticket Closed",
+      description: `Closed by ${user}. This channel will be deleted in **5 seconds**.`,
+      color: 0x4240ae,
+      timestamp: true
+    });
 
-    await interaction.reply({ embeds: [closeEmbed] });
+    await interaction.reply({
+      flags: MessageFlags.IsComponentsV2,
+      components: [closeContainer]
+    });
 
-    let savedTranscript = null;
-    let renderTranscriptUrl = null;
+    let savedTranscript: Awaited<ReturnType<typeof db.saveTranscript>> | null = null;
+    let renderTranscriptUrl: string | null = null;
 
     try {
       const messages = await fetchAllMessages(channel, 100, 5000);
 
       const textTranscript = messages
         .map((m) => {
-          const content = m.content?.trim() || (m.attachments.size ? "[attachment]" : "[no text]");
+          const content =
+            m.content?.trim() || (m.attachments.size ? "[attachment]" : "[no text]");
           return `[${m.createdAt.toISOString()}] ${m.author.tag}: ${content}`;
         })
         .join("\n");
 
-      savedTranscript = await db.saveTranscript(channel.name, user.tag, textTranscript);
+      savedTranscript = await db.saveTranscript(
+        channel.name,
+        user.tag,
+        textTranscript
+      );
 
       const transcriptBaseUrl = process.env.TRANSCRIPT_BASE_URL?.trim();
       const transcriptViewKey = process.env.TRANSCRIPT_VIEW_KEY?.trim();
@@ -91,7 +111,9 @@ module.exports = {
       if (transcriptBaseUrl && transcriptViewKey && savedTranscript?.id) {
         renderTranscriptUrl =
           `${transcriptBaseUrl.replace(/\/+$/, "")}` +
-          `/transcripts/${savedTranscript.id}?key=${encodeURIComponent(transcriptViewKey)}`;
+          `/transcripts/${savedTranscript.id}?key=${encodeURIComponent(
+            transcriptViewKey
+          )}`;
       }
     } catch (e) {
       console.error("Database transcript save failed:", e);
@@ -102,15 +124,19 @@ module.exports = {
       if (logId) {
         const logChannel =
           guild.channels.cache.get(logId) ??
-          await guild.channels.fetch(logId).catch(() => null);
+          (await guild.channels.fetch(logId).catch(() => null));
 
         if (logChannel?.isTextBased()) {
-          const logEmbed = new EmbedBuilder()
-            .setTitle("Transcript Saved")
-            .addFields(
+          const logContainer = buildEmbedLikeContainer({
+            title: "Transcript Saved",
+            fields: [
               { name: "Channel", value: channel.name, inline: true },
               { name: "Closed By", value: user.tag, inline: true },
-              { name: "Ticket Owner", value: `<@${ticket.user_id}>`, inline: true },
+              {
+                name: "Ticket Owner",
+                value: `<@${ticket.user_id}>`,
+                inline: true
+              },
               { name: "Category", value: ticket.category_key, inline: true },
               {
                 name: "Brief Description",
@@ -121,19 +147,23 @@ module.exports = {
                 name: "Feds URL",
                 value: ticket.feds_url?.slice(0, 1024) || "N/A",
                 inline: false
-              }
-            )
-            .setColor(0x4240ae)
-            .setTimestamp();
+              },
+              ...(renderTranscriptUrl
+                ? [
+                    {
+                      name: "Dashboard Transcript",
+                      value: `[Open in Render dashboard](${renderTranscriptUrl})`
+                    }
+                  ]
+                : [])
+            ],
+            color: 0x4240ae,
+            timestamp: true
+          });
 
-          if (renderTranscriptUrl) {
-            logEmbed.addFields({
-              name: "Dashboard Transcript",
-              value: `[Open in Render dashboard](${renderTranscriptUrl})`,
-            });
-          }
-
-          await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
+          await logChannel
+            .send({ flags: MessageFlags.IsComponentsV2, components: [logContainer] })
+            .catch(() => {});
         }
       }
     } catch (e) {
@@ -147,7 +177,11 @@ module.exports = {
     }
 
     setTimeout(() => {
-      channel.delete().catch((e) => console.error("Delete failed:", e));
+      channel.delete().catch((e: unknown) =>
+        console.error("Delete failed:", e)
+      );
     }, 5000);
-  },
+  }
 };
+
+export = command;

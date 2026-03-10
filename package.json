@@ -4,18 +4,27 @@
   "description": "Discord ticket bot",
   "main": "index.js",
   "engines": {
-    "node": "18.x"
+    "node": ">=18"
   },
   "scripts": {
+    "build": "tsc",
     "start": "node index.js",
-    "deploy:guild": "node deploy-commands.js"
+    "dev": "ts-node index.ts",
+    "deploy": "npm run deploy:guild",
+    "deploy:guild": "ts-node deploy-commands.ts",
+    "postinstall": "npm run build"
   },
   "dependencies": {
     "discord-html-transcripts": "^3.2.0",
-    "discord.js": "^14.16.3",
+    "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
     "form-data": "^4.0.5",
     "node-fetch": "^2.7.0",
     "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }

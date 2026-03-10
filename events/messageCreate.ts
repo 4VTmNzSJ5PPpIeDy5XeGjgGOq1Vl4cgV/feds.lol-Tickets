@@ -1,20 +1,23 @@
-const db = require("../database.js");
+import type { Client, Message } from "discord.js";
+import * as db from "../database";
 
-const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
+const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
-const dmCooldowns = new Map();
+const dmCooldowns = new Map<string, number>();
 const DM_COOLDOWN_MS = 60 * 1000;
 
-function isSupportMessage(message) {
-  return SUPPORT_ROLE_IDS.some((roleId) => message.member?.roles?.cache?.has(roleId));
+function isSupportMessage(message: Message): boolean {
+  return SUPPORT_ROLE_IDS.some((roleId) =>
+    message.member?.roles?.cache?.has(roleId)
+  );
 }
 
-module.exports = {
+const event = {
   name: "messageCreate",
 
-  async execute(message, client) {
+  async execute(message: Message, client: Client) {
     try {
       if (!message.guild) return;
       if (message.author.bot) return;
@@ -24,7 +27,8 @@ module.exports = {
 
       if (message.author.id === ticket.user_id) return;
 
-      const isStaff = isSupportMessage(message) ||
+      const isStaff =
+        isSupportMessage(message) ||
         message.member?.permissions?.has("ManageChannels");
 
       if (!isStaff) return;
@@ -44,14 +48,21 @@ module.exports = {
         ? message.content.trim().slice(0, 1200)
         : "[attachment]";
 
-      await ticketOwner.send(
-        `You have a new staff reply in **${message.guild.name}** ticket **#${message.channel.name}**.\n\n` +
-        `**${message.author.tag}:** ${preview}`
-      ).catch(() => {});
+      const channelName =
+        (message.channel as any).name ?? (message.channelId ?? "DM");
+
+      await ticketOwner
+        .send(
+          `You have a new staff reply in **${message.guild.name}** ticket **#${channelName}**.\n\n` +
+            `**${message.author.tag}:** ${preview}`
+        )
+        .catch(() => {});
 
       dmCooldowns.set(cooldownKey, now);
     } catch (err) {
-      console.error("[messageCreate] error:", err?.stack || err);
+      console.error("[messageCreate] error:", (err as Error)?.stack || err);
     }
-  },
+  }
 };
+
+export = event;
