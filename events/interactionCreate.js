@@ -411,7 +411,7 @@ module.exports = {
     // Escalate ticket
     if (interaction.isButton() && interaction.customId.startsWith("ticket_escalate_")) {
       const { channel, user } = interaction;
-      const escalateRoleId = process.env.ESCALATE_ROLE_ID;
+      const escalateRoleId = "1457448238243254314";
 
       const isSupport = isSupportMember(interaction);
       const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
