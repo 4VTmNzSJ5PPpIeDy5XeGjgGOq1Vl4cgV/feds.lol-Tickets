@@ -47,10 +47,14 @@ async function init() {
 }
 
 async function saveTranscript(channelName, closedBy, content) {
-  await pool.query(
-    "INSERT INTO transcripts (channel_name, closed_by, content) VALUES ($1, $2, $3)",
+  const result = await pool.query(
+    `INSERT INTO transcripts (channel_name, closed_by, content)
+     VALUES ($1, $2, $3)
+     RETURNING id, channel_name, closed_by, created_at`,
     [channelName, closedBy, content]
   );
+
+  return result.rows[0];
 }
 
 async function getTranscript(channelName) {
