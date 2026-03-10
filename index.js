@@ -521,25 +521,40 @@ function renderLogsPage() {
 /* Web server                                                                  */
 /* -------------------------------------------------------------------------- */
 
+function shouldLogRequest(req, pathname) {
+  if (req.method === "HEAD") return false;
+  if (pathname === "/favicon.ico") return false;
+  if (pathname === "/") return false;
+  if (pathname === "/status") return false;
+  if (pathname === "/logs") return false;
+  if (pathname === "/status.json") return false;
+  if (pathname === "/logs.json") return false;
+
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const urlObj = new URL(req.url, `http://${req.headers.host}`);
   const pathname = urlObj.pathname;
+  const logThisRequest = shouldLogRequest(req, pathname);
 
+  if (logThisRequest) {
   console.log(`[web] ${req.method} ${pathname}`);
+}
 
   try {
     if (pathname === "/healthz") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("ok");
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
     if (pathname === "/status") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderStatusPage());
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
@@ -550,14 +565,14 @@ const server = http.createServer(async (req, res) => {
         bot: botStatus,
         now: isoNow()
       }, null, 2));
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
     if (pathname === "/logs") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogsPage());
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
@@ -569,7 +584,7 @@ const server = http.createServer(async (req, res) => {
         logs: runtimeLogs,
         now: isoNow()
       }, null, 2));
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
@@ -577,7 +592,7 @@ const server = http.createServer(async (req, res) => {
       if (!isTranscriptAuthorised(urlObj)) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         res.end("Forbidden");
-        console.log(`[web] finished in ${Date.now() - started}ms`);
+        if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
         return;
       }
 
@@ -631,7 +646,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(basePage("Ticket Transcripts", html));
-        console.log(`[web] finished in ${Date.now() - started}ms`);
+        if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
         return;
       }
 
@@ -643,7 +658,7 @@ const server = http.createServer(async (req, res) => {
         if (!transcript) {
           res.writeHead(404, { "Content-Type": "text/plain" });
           res.end("Transcript not found");
-          console.log(`[web] finished in ${Date.now() - started}ms`);
+          if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
           return;
         }
 
@@ -673,19 +688,19 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(basePage(`Transcript #${transcript.id}`, html));
-        console.log(`[web] finished in ${Date.now() - started}ms`);
+        if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
         return;
       }
 
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
-      console.log(`[web] finished in ${Date.now() - started}ms`);
+      if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
       return;
     }
 
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("OK");
-    console.log(`[web] finished in ${Date.now() - started}ms`);
+    if (logThisRequest) {   console.log(`[web] finished in ${Date.now() - started}ms`); }
   } catch (err) {
     console.error("[web] route error:", err?.stack || err);
     res.writeHead(500, { "Content-Type": "text/plain" });
