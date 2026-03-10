@@ -992,7 +992,7 @@ async function startBot(): Promise<void> {
   await loadDatabase();
 
   console.log("[boot] Validating token via Discord REST...");
-  const validation = await validateTokenViaREST(TOKEN);
+  const validation = await validateTokenViaREST(TOKEN!);
   if (!validation.ok) {
     console.error("[boot] Token validation failed:", validation.error);
     throw new Error(`Discord token invalid or unreachable: ${validation.error}`);
