@@ -6,9 +6,10 @@ const {
 const transcripts = require("discord-html-transcripts");
 const fetch = require("node-fetch");
 const FormData = require("form-data");
+const db = require("../database.js");
 
 const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
-  ? process.env.SUPPORT_ROLE_IDS.split(",").map(id => id.trim())
+  ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
 module.exports = {
@@ -19,19 +20,24 @@ module.exports = {
   async execute(interaction) {
     const { channel, guild, member, user } = interaction;
 
-    // Make sure this is a ticket channel
-    if (!channel.name.includes("-")) {
-      return interaction.reply({ content: "This command can only be used inside a ticket.", ephemeral: true });
+    const ticket = await db.getTicketByChannel(channel.id);
+
+    if (!ticket || ticket.status !== "open") {
+      return interaction.reply({
+        content: "This command can only be used inside an open ticket.",
+        ephemeral: true,
+      });
     }
 
-    const isSupport = SUPPORT_ROLE_IDS.some(id => member.roles.cache.has(id));
-    const isAdmin   = member.permissions.has(PermissionFlagsBits.ManageChannels);
-
-    // Check if user is the ticket owner (their username is at the end of the channel name)
-    const isOwner = channel.name.endsWith(`-${user.username}`);
+    const isSupport = SUPPORT_ROLE_IDS.some((id) => member.roles.cache.has(id));
+    const isAdmin = member.permissions.has(PermissionFlagsBits.ManageChannels);
+    const isOwner = user.id === ticket.user_id;
 
     if (!isOwner && !isSupport && !isAdmin) {
-      return interaction.reply({ content: "You don't have permission to close this ticket.", ephemeral: true });
+      return interaction.reply({
+        content: "You don't have permission to close this ticket.",
+        ephemeral: true,
+      });
     }
 
     const closeEmbed = new EmbedBuilder()
@@ -42,11 +48,28 @@ module.exports = {
 
     await interaction.reply({ embeds: [closeEmbed] });
 
-    // Transcript
+    try {
+      const messages = await channel.messages.fetch({ limit: 100 });
+      const textTranscript = messages
+        .reverse()
+        .map((m) => {
+          const content = m.content?.trim() || (m.attachments.size ? "[attachment]" : "[no text]");
+          return `[${m.createdAt.toISOString()}] ${m.author.tag}: ${content}`;
+        })
+        .join("\n");
+
+      await db.saveTranscript(channel.name, user.tag, textTranscript);
+    } catch (e) {
+      console.error("Database transcript save failed:", e);
+    }
+
     try {
       const logId = process.env.LOG_CHANNEL_ID;
       if (logId) {
-        const logChannel = guild.channels.cache.get(logId) ?? await guild.channels.fetch(logId).catch(() => null);
+        const logChannel =
+          guild.channels.cache.get(logId) ??
+          await guild.channels.fetch(logId).catch(() => null);
+
         if (logChannel?.isTextBased()) {
           const transcript = await transcripts.createTranscript(channel, {
             limit: -1,
@@ -55,6 +78,7 @@ module.exports = {
           });
 
           let transcriptUrl = null;
+
           try {
             const form = new FormData();
             form.append("reqtype", "fileupload");
@@ -63,12 +87,17 @@ module.exports = {
               filename: `transcript-${channel.name}.html`,
               contentType: "text/html",
             });
+
             const response = await fetch("https://catbox.moe/user/api.php", {
               method: "POST",
               body: form,
               timeout: 8000,
             });
-            transcriptUrl = await response.text();
+
+            const text = await response.text();
+            if (text && text.startsWith("https://")) {
+              transcriptUrl = text;
+            }
           } catch (e) {
             console.error("Catbox upload failed:", e.message);
           }
@@ -76,25 +105,48 @@ module.exports = {
           const logEmbed = new EmbedBuilder()
             .setTitle("Transcript Saved")
             .addFields(
-              { name: "Channel",   value: channel.name, inline: true },
-              { name: "Closed By", value: `${user}`,    inline: true }
+              { name: "Channel", value: channel.name, inline: true },
+              { name: "Closed By", value: `${user.tag}`, inline: true },
+              { name: "Ticket Owner", value: `<@${ticket.user_id}>`, inline: true },
+              { name: "Category", value: ticket.category_key, inline: true },
+              { name: "Brief Description", value: ticket.brief_description.slice(0, 1024), inline: false },
+              { name: "Feds URL", value: ticket.feds_url.slice(0, 1024), inline: false }
             )
             .setColor(0x4240ae)
             .setTimestamp();
 
           if (transcriptUrl) {
-            logEmbed.addFields({ name: "View Transcript", value: `[Click to open](${transcriptUrl})` });
+            logEmbed.addFields({
+              name: "View Transcript",
+              value: `[Click to open](${transcriptUrl})`,
+            });
+
             await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
           } else {
-            logEmbed.addFields({ name: "View Transcript", value: "Download the attached file and open it in your browser." });
-            await logChannel.send({ embeds: [logEmbed], files: [transcript] }).catch(() => {});
+            logEmbed.addFields({
+              name: "View Transcript",
+              value: "Upload failed, so the HTML transcript is attached below.",
+            });
+
+            await logChannel.send({
+              embeds: [logEmbed],
+              files: [transcript],
+            }).catch(() => {});
           }
         }
       }
     } catch (e) {
-      console.error("Transcript failed:", e);
+      console.error("Transcript creation/logging failed:", e);
     }
 
-    setTimeout(() => channel.delete().catch(e => console.error("Delete failed:", e)), 5000);
+    try {
+      await db.closeTicketByChannel(channel.id);
+    } catch (e) {
+      console.error("Ticket DB close failed:", e);
+    }
+
+    setTimeout(() => {
+      channel.delete().catch((e) => console.error("Delete failed:", e));
+    }, 5000);
   },
 };
