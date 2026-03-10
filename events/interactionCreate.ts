@@ -17,41 +17,6 @@ import {
   type TextChannel
 } from "discord.js";
 import * as db from "../database";
-import type { TicketRow } from "../database";
-
-/** Rebuild the open-ticket embed (for re-sending when editing message after claim/escalate). */
-function buildOpenTicketEmbed(
-  ticket: TicketRow,
-  openerTag: string,
-  meta: { emoji: string; label: string; color: number; guidance?: string }
-): EmbedBuilder {
-  const guidance = (meta as { guidance?: string }).guidance ?? "";
-  return new EmbedBuilder()
-    .setAuthor({
-      name: "feds.lol Support",
-      iconURL: "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png"
-    })
-    .setTitle(`${meta.emoji} ${meta.label}`)
-    .setDescription(
-      `Welcome <@${ticket.user_id}>, thanks for reaching out.\n\n` +
-        `A staff member will assist you soon.\n\n` +
-        `> Press **Close Ticket** below if your issue is resolved.\n\n` +
-        (guidance ? `${guidance}` : "")
-    )
-    .addFields(
-      { name: "Ticket ID", value: `\`#${ticket.id}\``, inline: true },
-      { name: "Category", value: meta.label, inline: true },
-      {
-        name: "Brief description",
-        value: ticket.brief_description ?? "",
-        inline: false
-      },
-      { name: "Feds URL", value: ticket.feds_url ?? "", inline: false }
-    )
-    .setColor(meta.color)
-    .setFooter({ text: `Opened by ${openerTag}` })
-    .setTimestamp();
-}
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -466,10 +431,6 @@ const event = {
 
       const guidance = (meta as { guidance?: string }).guidance ?? "";
       const openEmbed = new EmbedBuilder()
-        .setAuthor({
-          name: "feds.lol Support",
-          iconURL: "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png"
-        })
         .setTitle(`${meta.emoji} ${meta.label}`)
         .setDescription(
           `Welcome ${user}, thanks for reaching out.\n\n` +
@@ -478,9 +439,9 @@ const event = {
             (guidance ? `${guidance}` : "")
         )
         .addFields(
-          { name: "Ticket ID", value: `\`#${ticketRecord.id}\``, inline: true },
+          { name: "Ticket ID", value: `#${ticketRecord.id}`, inline: true },
           { name: "Category", value: meta.label, inline: true },
-          { name: "Brief description", value: briefDescription, inline: false },
+          { name: "Brief Description", value: briefDescription, inline: false },
           { name: "Feds URL", value: fedsUrl, inline: false }
         )
         .setColor(meta.color)
@@ -571,10 +532,10 @@ const event = {
         )
         .catch(() => null);
 
-      if (msg?.components?.length) {
-        const ticket = await db.getTicketByChannel(channel.id);
-        const meta = ticket && (CATEGORY_META as any)[ticket.category_key];
-        const updatedRow: any = ActionRowBuilder.from(msg.components[0] as any);
+      if (msg) {
+        const updatedRow: any = ActionRowBuilder.from(
+          msg.components[0] as any
+        ) as any;
         (updatedRow.components as any[]).forEach((btn: any) => {
           if (btn.data?.custom_id?.startsWith("ticket_claim_")) btn.setDisabled(true);
           if (
@@ -584,11 +545,7 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        const payload: any = { components: [updatedRow] };
-        if (ticket && meta) {
-          payload.embeds = [buildOpenTicketEmbed(ticket, ticket.username, meta)];
-        }
-        await msg.edit(payload).catch(() => {});
+        await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
       return button.reply({ content: `Ticket claimed by ${user}.` });
@@ -643,10 +600,10 @@ const event = {
         )
         .catch(() => null);
 
-      if (msg?.components?.length) {
-        const ticket = await db.getTicketByChannel(channel.id);
-        const meta = ticket && (CATEGORY_META as any)[ticket.category_key];
-        const updatedRow: any = ActionRowBuilder.from(msg.components[0] as any);
+      if (msg) {
+        const updatedRow: any = ActionRowBuilder.from(
+          msg.components[0] as any
+        ) as any;
         (updatedRow.components as any[]).forEach((btn: any) => {
           if (btn.data?.custom_id?.startsWith("ticket_escalate_")) {
             btn.setDisabled(true);
@@ -658,11 +615,7 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        const payload: any = { components: [updatedRow] };
-        if (ticket && meta) {
-          payload.embeds = [buildOpenTicketEmbed(ticket, ticket.username, meta)];
-        }
-        await msg.edit(payload).catch(() => {});
+        await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
       return button.reply({

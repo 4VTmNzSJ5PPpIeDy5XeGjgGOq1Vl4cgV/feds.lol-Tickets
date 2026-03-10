@@ -130,11 +130,7 @@ const command = {
             .addFields(
               { name: "Channel", value: channel.name, inline: true },
               { name: "Closed By", value: user.tag, inline: true },
-              {
-                name: "Ticket Owner",
-                value: `<@${ticket.user_id}>`,
-                inline: true
-              },
+              { name: "Ticket Owner", value: `<@${ticket.user_id}>`, inline: true },
               { name: "Category", value: ticket.category_key, inline: true },
               {
                 name: "Brief Description",
