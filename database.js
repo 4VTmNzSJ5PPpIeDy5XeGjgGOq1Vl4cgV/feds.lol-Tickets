@@ -118,6 +118,31 @@ async function closeTicketByChannel(channelId) {
 
   return result.rows[0] ?? null;
 }
+async function listTranscripts(limit = 100) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+
+  const result = await pool.query(
+    `SELECT id, channel_name, closed_by, created_at
+     FROM transcripts
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [safeLimit]
+  );
+
+  return result.rows;
+}
+
+async function getTranscriptById(id) {
+  const result = await pool.query(
+    `SELECT id, channel_name, closed_by, content, created_at
+     FROM transcripts
+     WHERE id = $1
+     LIMIT 1`,
+    [id]
+  );
+
+  return result.rows[0] || null;
+}
 
 module.exports = {
   init,
@@ -127,4 +152,6 @@ module.exports = {
   getOpenTicketByUser,
   getTicketByChannel,
   closeTicketByChannel,
+  listTranscripts,
+  getTranscriptById,
 };
