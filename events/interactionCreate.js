@@ -492,25 +492,105 @@ module.exports = {
 
     // Create transcript
     if (interaction.isButton() && interaction.customId.startsWith("ticket_transcript_")) {
-      await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ ephemeral: true });
 
-      const { channel, user } = interaction;
+  const { channel, guild, user } = interaction;
+  const ticket = await db.getTicketByChannel(channel.id);
 
-      try {
-        const messages = await channel.messages.fetch({ limit: 100 });
-        const content = messages
-          .reverse()
-          .map((m) => `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content || "[no text]"}`)
-          .join("\n");
+  if (!ticket) {
+    return interaction.editReply({ content: "No ticket record found for this channel." });
+  }
 
-        await db.saveTranscript(channel.name, user.tag, content);
-        return interaction.editReply({ content: "Transcript saved to database." });
-      } catch (e) {
-        console.error("Transcript save failed:", e);
-        return interaction.editReply({ content: "Failed to save transcript." });
+  try {
+    let lastId;
+    const allMessages = [];
+
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+
+      const batch = await channel.messages.fetch(options);
+      if (!batch.size) break;
+
+      const batchArray = [...batch.values()];
+      allMessages.push(...batchArray);
+
+      if (batch.size < 100) break;
+      if (allMessages.length >= 5000) break;
+
+      lastId = batchArray[batchArray.length - 1].id;
+    }
+
+    const content = allMessages
+      .slice(0, 5000)
+      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+      .map((m) => {
+        const msgContent = m.content?.trim() || (m.attachments.size ? "[attachment]" : "[no text]");
+        return `[${m.createdAt.toISOString()}] ${m.author.tag}: ${msgContent}`;
+      })
+      .join("\n");
+
+    const savedTranscript = await db.saveTranscript(channel.name, user.tag, content);
+
+    const transcriptBaseUrl = process.env.TRANSCRIPT_BASE_URL?.trim();
+    const transcriptViewKey = process.env.TRANSCRIPT_VIEW_KEY?.trim();
+
+    let renderTranscriptUrl = null;
+    if (transcriptBaseUrl && transcriptViewKey && savedTranscript?.id) {
+      renderTranscriptUrl =
+        `${transcriptBaseUrl.replace(/\/+$/, "")}` +
+        `/transcripts/${savedTranscript.id}?key=${encodeURIComponent(transcriptViewKey)}`;
+    }
+
+    const logId = process.env.LOG_CHANNEL_ID;
+    if (logId) {
+      const logChannel =
+        guild.channels.cache.get(logId) ??
+        await guild.channels.fetch(logId).catch(() => null);
+
+      if (logChannel?.isTextBased()) {
+        const logEmbed = new EmbedBuilder()
+          .setTitle("Transcript Saved")
+          .addFields(
+            { name: "Channel", value: channel.name, inline: true },
+            { name: "Saved By", value: user.tag, inline: true },
+            { name: "Ticket Owner", value: `<@${ticket.user_id}>`, inline: true },
+            { name: "Category", value: ticket.category_key, inline: true },
+            {
+              name: "Brief Description",
+              value: ticket.brief_description?.slice(0, 1024) || "N/A",
+              inline: false
+            },
+            {
+              name: "Feds URL",
+              value: ticket.feds_url?.slice(0, 1024) || "N/A",
+              inline: false
+            }
+          )
+          .setColor(0x4240ae)
+          .setTimestamp();
+
+        if (renderTranscriptUrl) {
+          logEmbed.addFields({
+            name: "Dashboard Transcript",
+            value: `[Open in Render dashboard](${renderTranscriptUrl})`,
+          });
+        }
+
+        await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
       }
     }
 
+    return interaction.editReply({
+      content: renderTranscriptUrl
+        ? `Transcript saved. Dashboard link: ${renderTranscriptUrl}`
+        : "Transcript saved to database."
+    });
+  } catch (e) {
+    console.error("Transcript save failed:", e);
+    return interaction.editReply({ content: "Failed to save transcript." });
+  }
+}
     // Confirm close
     if (interaction.isButton() && interaction.customId.startsWith("ticket_confirm_close_")) {
       await interaction.deferUpdate();
