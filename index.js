@@ -7,7 +7,8 @@ const {
   Client,
   GatewayIntentBits,
   Collection,
-  ActivityType
+  ActivityType,
+  Partials
 } = require("discord.js");
 
 console.log("==> BUILD MARKER: 2026-03-09-LOGIN-CLEAN-V1");
@@ -124,12 +125,14 @@ async function main() {
   console.log("[boot] Creating Discord client");
 
   const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
-    ]
-  });
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages
+  ],
+  partials: [Partials.Channel]
+});
 
   client.commands = new Collection();
 
