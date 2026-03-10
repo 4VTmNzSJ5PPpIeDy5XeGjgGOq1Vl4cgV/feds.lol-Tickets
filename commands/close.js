@@ -12,6 +12,31 @@ const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
+async function fetchAllMessages(channel, batchSize = 100, maxMessages = 5000) {
+  const all = [];
+  let lastId;
+
+  while (true) {
+    const options = { limit: batchSize };
+    if (lastId) options.before = lastId;
+
+    const batch = await channel.messages.fetch(options);
+    if (!batch.size) break;
+
+    const batchArray = [...batch.values()];
+    all.push(...batchArray);
+
+    if (all.length >= maxMessages) break;
+    if (batch.size < batchSize) break;
+
+    lastId = batchArray[batchArray.length - 1].id;
+  }
+
+  return all
+    .slice(0, maxMessages)
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("close")
@@ -52,9 +77,9 @@ module.exports = {
     let renderTranscriptUrl = null;
 
     try {
-      const messages = await channel.messages.fetch({ limit: 100 });
+      const messages = await fetchAllMessages(channel, 100, 5000);
+
       const textTranscript = messages
-        .reverse()
         .map((m) => {
           const content = m.content?.trim() || (m.attachments.size ? "[attachment]" : "[no text]");
           return `[${m.createdAt.toISOString()}] ${m.author.tag}: ${content}`;
