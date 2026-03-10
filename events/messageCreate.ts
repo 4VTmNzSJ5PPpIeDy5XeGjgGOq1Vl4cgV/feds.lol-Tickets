@@ -1,5 +1,6 @@
 import type { Client, Message } from "discord.js";
 import * as db from "../database";
+import { addRecipient } from "../lib/dmRecipients";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -57,6 +58,8 @@ const event = {
             `**${message.author.tag}:** ${preview}`
         )
         .catch(() => {});
+
+      addRecipient(ticket.user_id);
 
       dmCooldowns.set(cooldownKey, now);
     } catch (err) {

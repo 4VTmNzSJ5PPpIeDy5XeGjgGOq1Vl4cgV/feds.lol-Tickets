@@ -16,6 +16,7 @@ import {
 } from "discord.js";
 
 import * as db from "./database";
+import { getRecipientIds } from "./lib/dmRecipients";
 
 type LogLevel = "log" | "warn" | "error";
 
@@ -150,6 +151,81 @@ function canSendNotification(key: string): boolean {
 
   notificationCooldowns.set(key, now);
   return true;
+}
+
+/** Delete all messages sent by the bot in a DM channel. Runs on startup to clear old DMs. */
+async function clearBotMessagesInChannel(channel: any, botId: string): Promise<number> {
+  let deleted = 0;
+  let before: string | undefined;
+  const DELAY_MS = 250;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const opts: { limit: number; before?: string } = { limit: 100 };
+    if (before) opts.before = before;
+
+    const batch = await channel.messages.fetch(opts);
+    if (!batch.size) break;
+
+    const toDelete = batch.filter((m) => m.author.id === botId);
+    for (const msg of toDelete.values()) {
+      try {
+        await msg.delete();
+        deleted++;
+        await new Promise((r) => setTimeout(r, DELAY_MS));
+      } catch {
+        // ignore per-message errors (e.g. already deleted, rate limit)
+      }
+    }
+
+    const last = batch.last();
+    if (!last || batch.size < 100) break;
+    before = last.id;
+  }
+
+  return deleted;
+}
+
+/** Clear only admin DM and DMs we sent for tickets (no server/guild messages). */
+async function clearAllBotDMs(client: Client): Promise<void> {
+  const botId = client.user?.id;
+  if (!botId) return;
+
+  let totalDeleted = 0;
+
+  // 1. Clear admin DM
+  try {
+    const adminUser = await client.users.fetch(ADMIN_USER_ID);
+    const dmChannel = await adminUser.createDM();
+    const n = await clearBotMessagesInChannel(dmChannel, botId);
+    totalDeleted += n;
+    if (n > 0) {
+      console.log(`[ready] Cleared ${n} bot message(s) in admin DM`);
+    }
+  } catch (e) {
+    console.warn("[ready] Could not clear admin DM:", (e as Error)?.message || e);
+  }
+
+  // 2. Clear DMs we sent to users for ticket notifications (staff reply, etc.)
+  const ticketRecipientIds = getRecipientIds();
+  for (const userId of ticketRecipientIds) {
+    if (userId === ADMIN_USER_ID) continue;
+    try {
+      const user = await client.users.fetch(userId);
+      const dmChannel = await user.createDM();
+      const n = await clearBotMessagesInChannel(dmChannel, botId);
+      totalDeleted += n;
+      if (n > 0) {
+        console.log(`[ready] Cleared ${n} bot message(s) in ticket DM to ${userId}`);
+      }
+    } catch {
+      // ignore (user may have blocked bot or left)
+    }
+  }
+
+  if (totalDeleted > 0) {
+    console.log(`[ready] Cleared ${totalDeleted} total bot DM(s) on startup (admin + ticket recipients only)`);
+  }
 }
 
 async function sendAdminDm(
@@ -1040,6 +1116,8 @@ async function startBot(): Promise<void> {
     });
 
     console.log("[ready] Presence set");
+
+    await clearAllBotDMs(client);
 
     await sendAdminDm(
       client,
