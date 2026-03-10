@@ -130,8 +130,7 @@ function isSupportMember(interaction: Interaction): boolean {
   if (!interaction.isButton() && !interaction.isAnySelectMenu()) return false;
   const member = interaction.member;
   if (!member || !("roles" in member)) return false;
-  // @ts-expect-error discord.js typing: roles can be GuildMemberRoleManager
-  const roles = member.roles.cache;
+  const roles = (member.roles as { cache: Map<string, unknown> }).cache;
   return SUPPORT_ROLE_IDS.some((id) => roles.has(id));
 }
 

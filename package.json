@@ -15,6 +15,7 @@
     "postinstall": "npm run build"
   },
   "dependencies": {
+    "@types/node": "^25.4.0",
     "discord-html-transcripts": "^3.2.0",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
@@ -23,7 +24,6 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^25.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
