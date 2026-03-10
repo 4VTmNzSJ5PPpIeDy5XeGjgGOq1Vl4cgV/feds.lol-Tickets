@@ -523,12 +523,18 @@ function renderLogsPage() {
 
 function shouldLogRequest(req, pathname) {
   if (req.method === "HEAD") return false;
-  if (pathname === "/favicon.ico") return false;
-  if (pathname === "/") return false;
-  if (pathname === "/status") return false;
-  if (pathname === "/logs") return false;
-  if (pathname === "/status.json") return false;
-  if (pathname === "/logs.json") return false;
+
+  const ignored = new Set([
+    "/",
+    "/favicon.ico",
+    "/healthz",
+    "/status",
+    "/logs",
+    "/status.json",
+    "/logs.json"
+  ]);
+
+  if (ignored.has(pathname)) return false;
 
   return true;
 }
