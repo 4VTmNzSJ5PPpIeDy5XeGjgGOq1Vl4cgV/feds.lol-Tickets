@@ -15,13 +15,19 @@ const {
 
 const db = require("./database.js");
 
-console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-STATUS-LOGS");
 
-process.on("uncaughtException", err => {
+
+/* -------------------------------------------------------------------------- */
+/* Boot logging                                                                */
+/* -------------------------------------------------------------------------- */
+
+console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-GATEWAY-DEBUG");
+
+process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
 });
 
-process.on("unhandledRejection", err => {
+process.on("unhandledRejection", (err) => {
   console.error("[fatal] unhandledRejection:", err?.stack || err);
 });
 
@@ -38,13 +44,13 @@ const TOKEN = requireEnv("TOKEN");
 console.log("[boot] dotenv loaded");
 console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
 console.log("[boot] PORT:", process.env.PORT || "not set");
+console.log("[boot] MESSAGE_CONTENT_INTENT_REQUIRED:", true);
 
 
-/*
-|--------------------------------------------------------------------------
-| Bot status tracker
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Runtime status + log buffer                                                 */
+/* -------------------------------------------------------------------------- */
 
 const botStatus = {
   state: "starting",
@@ -61,17 +67,10 @@ function updateStatus(patch) {
   Object.assign(botStatus, patch);
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Runtime log buffer
-|--------------------------------------------------------------------------
-*/
-
 const runtimeLogs = [];
-const MAX_RUNTIME_LOGS = 200;
+const MAX_RUNTIME_LOGS = 300;
 
-function stringifyLogPart(value) {
+function safeStringify(value) {
   if (typeof value === "string") return value;
   try {
     return JSON.stringify(value);
@@ -81,44 +80,41 @@ function stringifyLogPart(value) {
 }
 
 function addRuntimeLog(level, args) {
-  const entry = {
+  runtimeLogs.push({
     time: new Date().toISOString(),
     level,
-    message: args.map(stringifyLogPart).join(" ")
-  };
-
-  runtimeLogs.push(entry);
+    message: args.map(safeStringify).join(" ")
+  });
 
   if (runtimeLogs.length > MAX_RUNTIME_LOGS) {
     runtimeLogs.shift();
   }
 }
 
-const originalConsoleLog = console.log.bind(console);
-const originalConsoleWarn = console.warn.bind(console);
-const originalConsoleError = console.error.bind(console);
+const originalLog = console.log.bind(console);
+const originalWarn = console.warn.bind(console);
+const originalError = console.error.bind(console);
 
 console.log = (...args) => {
   addRuntimeLog("log", args);
-  originalConsoleLog(...args);
+  originalLog(...args);
 };
 
 console.warn = (...args) => {
   addRuntimeLog("warn", args);
-  originalConsoleWarn(...args);
+  originalWarn(...args);
 };
 
 console.error = (...args) => {
   addRuntimeLog("error", args);
-  originalConsoleError(...args);
+  originalError(...args);
 };
 
 
-/*
-|--------------------------------------------------------------------------
-| Helper functions
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                     */
+/* -------------------------------------------------------------------------- */
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -134,33 +130,38 @@ function renderLayout(title, body) {
 <html>
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(title)}</title>
 <style>
-body{background:#0b0b0f;color:#f3f3f5;font-family:Inter,Arial;padding:24px}
+body{background:#0b0b0f;color:#f3f3f5;font-family:Inter,Arial,sans-serif;padding:24px}
+.wrap{max-width:1100px;margin:0 auto}
 .card{background:#14141b;border:1px solid #262633;border-radius:12px;padding:16px;margin-bottom:14px}
 .meta{color:#a7a7b5;font-size:14px;margin-top:6px}
 a{color:#9bb8ff;text-decoration:none}
+a:hover{text-decoration:underline}
 pre{background:#101017;padding:16px;border-radius:10px;white-space:pre-wrap;word-break:break-word}
+input{width:100%;max-width:420px;padding:10px;border-radius:8px;border:1px solid #2d2d3a;background:#101017;color:#f3f3f5}
 </style>
 </head>
 <body>
+<div class="wrap">
 ${body}
+</div>
 </body>
 </html>`;
 }
 
-function isAuthorised(urlObj) {
+function isTranscriptAuthorised(urlObj) {
   const expected = process.env.TRANSCRIPT_VIEW_KEY;
   if (!expected) return false;
   return urlObj.searchParams.get("key") === expected;
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| Web server
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Web server                                                                  */
+/* -------------------------------------------------------------------------- */
 
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
@@ -171,33 +172,41 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (pathname === "/healthz") {
-      res.writeHead(200);
-      return res.end("ok");
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
     }
 
     if (pathname === "/status") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({
+      res.end(JSON.stringify({
         service: "feds-agent",
         bot: botStatus,
         now: new Date().toISOString()
       }, null, 2));
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
     }
 
     if (pathname === "/logs") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({
+      res.end(JSON.stringify({
         service: "feds-agent",
         count: runtimeLogs.length,
         logs: runtimeLogs,
         now: new Date().toISOString()
       }, null, 2));
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
     }
 
     if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
-      if (!isAuthorised(urlObj)) {
-        res.writeHead(403);
-        return res.end("Forbidden");
+      if (!isTranscriptAuthorised(urlObj)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        console.log(`[web] finished in ${Date.now() - started}ms`);
+        return;
       }
 
       if (pathname === "/transcripts") {
@@ -205,46 +214,43 @@ const server = http.createServer(async (req, res) => {
         const q = (urlObj.searchParams.get("q") || "").trim().toLowerCase();
 
         const filtered = q
-          ? rows.filter(row =>
+          ? rows.filter((row) =>
               String(row.channel_name).toLowerCase().includes(q) ||
               String(row.closed_by).toLowerCase().includes(q) ||
               String(row.id).includes(q)
             )
           : rows;
 
-        const cards = filtered.map(row => `
-        <div class="card">
-          <strong>#${row.id} ${escapeHtml(row.channel_name)}</strong>
-          <div class="meta">
-            Closed by ${escapeHtml(row.closed_by)}
-            • ${new Date(row.created_at).toLocaleString("en-GB")}
-          </div>
-          <br>
-          <a href="/transcripts/${row.id}?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">Open transcript</a>
-        </div>
-        `).join("") || `<div class="card">No transcripts found.</div>`;
+        const cards = filtered.length
+          ? filtered.map((row) => `
+            <div class="card">
+              <strong>#${row.id} ${escapeHtml(row.channel_name)}</strong>
+              <div class="meta">
+                Closed by ${escapeHtml(row.closed_by)}
+                • ${new Date(row.created_at).toLocaleString("en-GB")}
+              </div>
+              <br>
+              <a href="/transcripts/${row.id}?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">Open transcript</a>
+            </div>
+          `).join("")
+          : `<div class="card">No transcripts found.</div>`;
 
         const html = `
-        <div class="card">
-          <strong>Ticket Transcripts</strong>
-          <div class="meta">Latest ${filtered.length} result(s)</div>
-          <br>
-          <form method="GET" action="/transcripts">
-            <input type="hidden" name="key" value="${escapeHtml(urlObj.searchParams.get("key") || "")}">
-            <input
-              type="text"
-              name="q"
-              value="${escapeHtml(q)}"
-              placeholder="Search by channel, closer, or ID"
-              style="width:100%;max-width:420px;padding:10px;border-radius:8px;border:1px solid #2d2d3a;background:#101017;color:#f3f3f5;"
-            >
-          </form>
-        </div>
-        ${cards}
+          <div class="card">
+            <strong>Ticket Transcripts</strong>
+            <div class="meta">Latest ${filtered.length} result(s)</div>
+            <br>
+            <form method="GET" action="/transcripts">
+              <input type="hidden" name="key" value="${escapeHtml(urlObj.searchParams.get("key") || "")}">
+              <input type="text" name="q" value="${escapeHtml(q)}" placeholder="Search by channel, closer, or ID">
+            </form>
+          </div>
+          ${cards}
         `;
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(renderLayout("Ticket Transcripts", html));
+        console.log(`[web] finished in ${Date.now() - started}ms`);
         return;
       }
 
@@ -254,51 +260,60 @@ const server = http.createServer(async (req, res) => {
         const transcript = await db.getTranscriptById(Number(idMatch[1]));
 
         if (!transcript) {
-          res.writeHead(404);
-          return res.end("Transcript not found");
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Transcript not found");
+          console.log(`[web] finished in ${Date.now() - started}ms`);
+          return;
         }
 
         const html = `
-        <div class="card">
-          <strong>Channel:</strong> ${escapeHtml(transcript.channel_name)}
-          <div class="meta">
-            Closed by ${escapeHtml(transcript.closed_by)}
-            • ${new Date(transcript.created_at).toLocaleString("en-GB")}
+          <div class="card">
+            <strong>Channel:</strong> ${escapeHtml(transcript.channel_name)}
+            <div class="meta">
+              Closed by ${escapeHtml(transcript.closed_by)}
+              • ${new Date(transcript.created_at).toLocaleString("en-GB")}
+            </div>
+            <br>
+            <a href="/transcripts?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">← Back to transcript list</a>
           </div>
-          <br>
-          <a href="/transcripts?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">← Back to transcript list</a>
-        </div>
 
-        <pre>${escapeHtml(transcript.content)}</pre>
+          <pre>${escapeHtml(transcript.content)}</pre>
         `;
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(renderLayout(`Transcript #${transcript.id}`, html));
+        console.log(`[web] finished in ${Date.now() - started}ms`);
         return;
       }
+
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
     }
 
-    res.writeHead(200);
+    res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("OK");
+    console.log(`[web] finished in ${Date.now() - started}ms`);
   } catch (err) {
     console.error("[web] route error:", err?.stack || err);
-    res.writeHead(500);
+    res.writeHead(500, { "Content-Type": "text/plain" });
     res.end("Server error");
   }
-
-  console.log(`[web] finished in ${Date.now() - started}ms`);
 });
+
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 121000;
 
 server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
   console.log(`[boot] Web server running on ${process.env.PORT || 3000}`);
 });
 
 
-/*
-|--------------------------------------------------------------------------
-| Database
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Database                                                                    */
+/* -------------------------------------------------------------------------- */
 
 async function loadDatabase() {
   console.log("[boot] Initialising database...");
@@ -307,11 +322,10 @@ async function loadDatabase() {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| Command loader
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Command loader                                                              */
+/* -------------------------------------------------------------------------- */
 
 function loadCommands(client) {
   const commandsPath = path.join(__dirname, "commands");
@@ -321,8 +335,7 @@ function loadCommands(client) {
     return;
   }
 
-  const files = fs.readdirSync(commandsPath)
-    .filter(f => f.endsWith(".js"));
+  const files = fs.readdirSync(commandsPath).filter((f) => f.endsWith(".js"));
 
   console.log(`[commands] Found ${files.length} command files`);
 
@@ -340,11 +353,10 @@ function loadCommands(client) {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| Event loader
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Event loader                                                                */
+/* -------------------------------------------------------------------------- */
 
 function loadEvents(client) {
   const eventsPath = path.join(__dirname, "events");
@@ -354,8 +366,7 @@ function loadEvents(client) {
     return;
   }
 
-  const files = fs.readdirSync(eventsPath)
-    .filter(f => f.endsWith(".js"));
+  const files = fs.readdirSync(eventsPath).filter((f) => f.endsWith(".js"));
 
   console.log(`[events] Found ${files.length} event files`);
 
@@ -378,11 +389,10 @@ function loadEvents(client) {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| Discord Bot
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/* Discord bot                                                                 */
+/* -------------------------------------------------------------------------- */
 
 async function startBot() {
   await loadDatabase();
@@ -422,7 +432,7 @@ async function startBot() {
     console.log("[ready] Presence set");
   });
 
-  client.on("shardDisconnect", e => {
+  client.on("shardDisconnect", (e) => {
     updateStatus({
       state: "disconnected",
       lastDisconnect: {
@@ -441,7 +451,15 @@ async function startBot() {
     console.log("[gateway] reconnecting...");
   });
 
-  client.on("error", err => {
+  client.on("shardResume", (id, replayedEvents) => {
+    console.log(`[gateway] shard ${id} resumed (${replayedEvents} replayed events)`);
+  });
+
+  client.on("shardReady", (id, unavailableGuilds) => {
+    console.log(`[gateway] shard ${id} ready (${unavailableGuilds?.size ?? 0} unavailable guilds)`);
+  });
+
+  client.on("error", (err) => {
     updateStatus({
       lastError: {
         time: new Date().toISOString(),
@@ -452,7 +470,7 @@ async function startBot() {
     console.error("[client error]", err);
   });
 
-  client.on("warn", msg => {
+  client.on("warn", (msg) => {
     updateStatus({
       lastWarn: {
         time: new Date().toISOString(),
@@ -463,7 +481,7 @@ async function startBot() {
     console.warn("[client warn]", msg);
   });
 
-  client.on("debug", msg => {
+  client.on("debug", (msg) => {
     const text = String(msg || "");
     const lower = text.toLowerCase();
 
@@ -513,7 +531,7 @@ async function startBot() {
   await client.login(TOKEN);
 }
 
-startBot().catch(err => {
+startBot().catch((err) => {
   updateStatus({
     state: "startup_failed",
     lastError: {
