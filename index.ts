@@ -972,14 +972,15 @@ function loadEvents(client: Client & { commands: CommandCollection }): void {
   }
 }
 
-async function validateTokenViaREST(token: string): Promise<{ ok: boolean; user?: string; error?: string }> {
+async function validateTokenViaREST(token: string): Promise<{ ok: boolean; user?: string; error?: string; rateLimited?: boolean }> {
   try {
     const res = await fetch("https://discord.com/api/v10/users/@me", {
       headers: { Authorization: `Bot ${token.trim()}` }
     });
     const data = (await res.json().catch(() => ({}))) as { username?: string; discriminator?: string; message?: string };
     if (!res.ok) {
-      return { ok: false, error: data.message || res.statusText || String(res.status) };
+      const rateLimited = res.status === 429;
+      return { ok: false, error: data.message || res.statusText || String(res.status), rateLimited };
     }
     const user = data.username ? `${data.username}${data.discriminator && data.discriminator !== "0" ? `#${data.discriminator}` : ""}` : undefined;
     return { ok: true, user };
@@ -994,10 +995,15 @@ async function startBot(): Promise<void> {
   console.log("[boot] Validating token via Discord REST...");
   const validation = await validateTokenViaREST(TOKEN!);
   if (!validation.ok) {
-    console.error("[boot] Token validation failed:", validation.error);
-    throw new Error(`Discord token invalid or unreachable: ${validation.error}`);
+    if (validation.rateLimited) {
+      console.warn("[boot] Token validation skipped (Discord rate limit). Proceeding to gateway login.");
+    } else {
+      console.error("[boot] Token validation failed:", validation.error);
+      throw new Error(`Discord token invalid or unreachable: ${validation.error}`);
+    }
+  } else {
+    console.log("[boot] Token validated via REST", validation.user ? `(Bot: ${validation.user})` : "");
   }
-  console.log("[boot] Token validated via REST", validation.user ? `(Bot: ${validation.user})` : "");
 
   console.log("[boot] Creating Discord client");
 
