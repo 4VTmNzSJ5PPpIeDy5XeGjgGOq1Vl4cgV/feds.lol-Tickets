@@ -48,6 +48,9 @@ module.exports = {
 
     await interaction.reply({ embeds: [closeEmbed] });
 
+    let savedTranscript = null;
+    let renderTranscriptUrl = null;
+
     try {
       const messages = await channel.messages.fetch({ limit: 100 });
       const textTranscript = messages
@@ -58,7 +61,16 @@ module.exports = {
         })
         .join("\n");
 
-      await db.saveTranscript(channel.name, user.tag, textTranscript);
+      savedTranscript = await db.saveTranscript(channel.name, user.tag, textTranscript);
+
+      const transcriptBaseUrl = process.env.TRANSCRIPT_BASE_URL?.trim();
+      const transcriptViewKey = process.env.TRANSCRIPT_VIEW_KEY?.trim();
+
+      if (transcriptBaseUrl && transcriptViewKey && savedTranscript?.id) {
+        renderTranscriptUrl =
+          `${transcriptBaseUrl.replace(/\/+$/, "")}` +
+          `/transcripts/${savedTranscript.id}?key=${encodeURIComponent(transcriptViewKey)}`;
+      }
     } catch (e) {
       console.error("Database transcript save failed:", e);
     }
@@ -77,7 +89,7 @@ module.exports = {
             poweredBy: false,
           });
 
-          let transcriptUrl = null;
+          let catboxTranscriptUrl = null;
 
           try {
             const form = new FormData();
@@ -96,7 +108,7 @@ module.exports = {
 
             const text = await response.text();
             if (text && text.startsWith("https://")) {
-              transcriptUrl = text;
+              catboxTranscriptUrl = text;
             }
           } catch (e) {
             console.error("Catbox upload failed:", e.message);
@@ -106,25 +118,40 @@ module.exports = {
             .setTitle("Transcript Saved")
             .addFields(
               { name: "Channel", value: channel.name, inline: true },
-              { name: "Closed By", value: `${user.tag}`, inline: true },
+              { name: "Closed By", value: user.tag, inline: true },
               { name: "Ticket Owner", value: `<@${ticket.user_id}>`, inline: true },
               { name: "Category", value: ticket.category_key, inline: true },
-              { name: "Brief Description", value: ticket.brief_description.slice(0, 1024), inline: false },
-              { name: "Feds URL", value: ticket.feds_url.slice(0, 1024), inline: false }
+              {
+                name: "Brief Description",
+                value: ticket.brief_description?.slice(0, 1024) || "N/A",
+                inline: false
+              },
+              {
+                name: "Feds URL",
+                value: ticket.feds_url?.slice(0, 1024) || "N/A",
+                inline: false
+              }
             )
             .setColor(0x4240ae)
             .setTimestamp();
 
-          if (transcriptUrl) {
+          if (renderTranscriptUrl) {
             logEmbed.addFields({
-              name: "View Transcript",
-              value: `[Click to open](${transcriptUrl})`,
+              name: "Dashboard Transcript",
+              value: `[Open in Render dashboard](${renderTranscriptUrl})`,
+            });
+          }
+
+          if (catboxTranscriptUrl) {
+            logEmbed.addFields({
+              name: "HTML Transcript",
+              value: `[Open uploaded HTML](${catboxTranscriptUrl})`,
             });
 
             await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
           } else {
             logEmbed.addFields({
-              name: "View Transcript",
+              name: "HTML Transcript",
               value: "Upload failed, so the HTML transcript is attached below.",
             });
 
