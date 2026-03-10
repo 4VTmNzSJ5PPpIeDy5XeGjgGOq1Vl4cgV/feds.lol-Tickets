@@ -642,7 +642,7 @@ function shouldLogRequest(req: http.IncomingMessage, pathname: string): boolean 
     "/status",
     "/logs",
     "/status.json",
-    "/transcripts",
+    "/transcripts/*",
     "/logs.json"
   ]);
 
