@@ -25,6 +25,26 @@ async function init() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tickets (
+      id SERIAL PRIMARY KEY,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      brief_description TEXT NOT NULL,
+      feds_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TIMESTAMP DEFAULT NOW(),
+      closed_at TIMESTAMP NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tickets_user_open
+    ON tickets (guild_id, user_id, status)
+  `);
 }
 
 async function saveTranscript(channelName, closedBy, content) {
@@ -48,9 +68,77 @@ async function getTranscript(channelName) {
   return result.rows[0] || null;
 }
 
+async function createTicket({
+  guildId,
+  channelId,
+  userId,
+  username,
+  briefDescription,
+  fedsUrl
+}) {
+  const result = await pool.query(
+    `INSERT INTO tickets (
+      guild_id,
+      channel_id,
+      user_id,
+      username,
+      brief_description,
+      feds_url
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *`,
+    [guildId, channelId, userId, username, briefDescription, fedsUrl]
+  );
+
+  return result.rows[0];
+}
+
+async function getOpenTicketByUser(guildId, userId) {
+  const result = await pool.query(
+    `SELECT *
+     FROM tickets
+     WHERE guild_id = $1
+       AND user_id = $2
+       AND status = 'open'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [guildId, userId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getTicketByChannel(channelId) {
+  const result = await pool.query(
+    `SELECT *
+     FROM tickets
+     WHERE channel_id = $1
+     LIMIT 1`,
+    [channelId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function closeTicket(channelId) {
+  const result = await pool.query(
+    `UPDATE tickets
+     SET status = 'closed',
+         closed_at = NOW()
+     WHERE channel_id = $1
+     RETURNING *`,
+    [channelId]
+  );
+
+  return result.rows[0] || null;
+}
+
 module.exports = {
   pool,
   init,
   saveTranscript,
-  getTranscript
+  getTranscript,
+  createTicket,
+  getOpenTicketByUser,
+  getTicketByChannel,
+  closeTicket
 };
