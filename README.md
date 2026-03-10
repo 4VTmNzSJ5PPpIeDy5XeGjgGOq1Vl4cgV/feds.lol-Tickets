@@ -1,45 +1,95 @@
 # 🎟️ feds.lol Ticket Bot
 
-A modern **Discord ticket system** built with **discord.js v14**.
+![Node](https://img.shields.io/badge/node-18%2B-green)
+![discord.js](https://img.shields.io/badge/discord.js-v14-blue)
+![Database](https://img.shields.io/badge/database-PostgreSQL-blue)
+![Deploy](https://img.shields.io/badge/deploy-render-purple)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-This bot allows servers to create structured support tickets with categories, collect information through a modal form, notify users when staff respond, and automatically store transcripts in a PostgreSQL database.
+A **production-ready Discord ticket system** built with **discord.js v14**.
 
-It also provides a **secure web dashboard to view ticket transcripts directly from Render**.
+The bot provides a structured support workflow with:
 
-Designed to run locally or on cloud platforms such as **Render**.
+- ticket panels  
+- modal ticket forms  
+- staff notifications  
+- PostgreSQL transcript storage  
+- live bot status dashboard  
+- runtime logs viewer  
+
+Everything runs inside a **single Render web service**, including the bot and dashboard.
 
 ---
 
 # ✨ Features
 
-- 🎫 Ticket panel with category selection
-- 📝 Modal ticket form (brief description + Feds URL)
-- 🛑 Anti-spam protection  
-  - prevents multiple open tickets per user  
-  - ticket creation cooldown
-- 🔒 Close ticket command
-- 📜 Full message transcript capture (up to thousands of messages)
-- 🌐 Web dashboard to browse transcripts
-- 🗄️ Transcript storage in PostgreSQL
-- 📩 DM notification when staff reply in a ticket
-- 👮 Support role permissions
-- 🧠 Ticket ownership stored in database
-- ⚡ Slash command support
-- 📂 Modular command/event architecture
-- ☁️ Cloud deployment ready (Render compatible)
+## 🎫 Ticket System
+
+- Category-based ticket creation
+- Interactive **modal ticket form**
+- Automatic ticket channel creation
+- Staff role pings
+- Slash command interface
+
+---
+
+## 🛡️ Anti-Spam Protection
+
+- Prevents multiple open tickets per user
+- Ticket creation cooldown
+- Database ticket ownership validation
+
+---
+
+## 📜 Transcript System
+
+- Full message transcript capture
+- Stored in PostgreSQL
+- Secure web dashboard access
+
+---
+
+## 🌐 Web Dashboard
+
+Hosted on the same Render service.
+
+Includes:
+
+- transcript viewer
+- bot status page
+- runtime logs
+- health endpoint
+
+---
+
+## 📩 Notifications
+
+- DM alerts when staff reply
+- Optional admin alerts for bot lifecycle events
+- Prevents user self-notification spam
+
+---
+
+## ⚡ Production Ready
+
+- modular command/event architecture
+- cloud deployment ready
+- environment variable configuration
+- runtime diagnostics
+- gateway debugging
 
 ---
 
 # 📂 Project Structure
 
 ```
-ticket-bot/
+ticket-bot
 │
-├─ commands/
+├─ commands
 │   ├─ close.js
 │   └─ panel.js
 │
-├─ events/
+├─ events
 │   ├─ interactionCreate.js
 │   └─ messageCreate.js
 │
@@ -52,10 +102,37 @@ ticket-bot/
 
 ---
 
+# 🧠 System Architecture
+
+```mermaid
+flowchart LR
+
+A[Discord Users] --> B[Discord Bot]
+
+B --> C[Commands System]
+B --> D[Events System]
+
+C --> E[Ticket Creation]
+D --> F[Message Monitoring]
+
+E --> G[PostgreSQL Database]
+F --> H[Transcript Capture]
+
+H --> G
+
+B --> I[Web Server]
+
+I --> J[Status Page]
+I --> K[Logs Viewer]
+I --> L[Transcript Dashboard]
+```
+
+---
+
 # ⚙️ Requirements
 
-- **Node.js 18+**
-- **PostgreSQL database**
+- Node.js **18+**
+- PostgreSQL database
 - Discord Bot Token
 - Discord Application Client ID
 - Discord Guild ID
@@ -66,14 +143,14 @@ ticket-bot/
 
 Clone the repository:
 
-```bash
+```
 git clone https://github.com/4VTmNzSJ5PPpIeDy5XeGjgGOq1Vl4cgV/feds.lol-Tickets.git
 cd feds.lol-Tickets
 ```
 
 Install dependencies:
 
-```bash
+```
 npm install
 ```
 
@@ -81,7 +158,7 @@ npm install
 
 # 🔑 Environment Variables
 
-Create a `.env` file in the root directory.
+Create a `.env` file:
 
 ```
 TOKEN=your_discord_bot_token
@@ -98,24 +175,23 @@ CATEGORY_PURCHASE_BILLING=category_id
 CATEGORY_BADGE_APPLICATION=category_id
 
 LOG_CHANNEL_ID=log_channel_id
-
-TRANSCRIPT_BASE_URL=https://your-render-service.onrender.com
-TRANSCRIPT_VIEW_KEY=your_secure_access_key
+TRANSCRIPT_VIEW_KEY=secure_access_key
 ```
 
-Example:
+Optional runtime variables:
 
 ```
-SUPPORT_ROLE_IDS=1408259930267451512,1457845846157561990
+PORT=3000
+NODE_ENV=production
 ```
 
 ---
 
 # 🚀 Deploy Slash Commands
 
-Before running the bot, deploy slash commands to your server:
+Before starting the bot:
 
-```bash
+```
 npm run deploy:guild
 ```
 
@@ -123,65 +199,75 @@ npm run deploy:guild
 
 # ▶️ Running the Bot
 
-Start the bot locally:
+Start locally:
 
-```bash
+```
 npm start
 ```
 
-Expected startup logs:
+Example startup logs:
 
 ```
 [boot] dotenv loaded
 [boot] Database ready
-[commands] Loaded command: close
-[commands] Loaded command: panel
-[events] Registered event: interactionCreate
-[events] Registered event: messageCreate
+[boot] Creating Discord client
+[commands] loaded panel
+[commands] loaded close
+[events] registered interactionCreate
+[events] registered messageCreate
 [ready] Logged in as BotName
 ```
 
 ---
 
-# 🎫 Ticket Flow
+# 🎫 Ticket Workflow
 
-1. Admin runs `/panel`
-2. User selects a **ticket category**
-3. Bot shows a **modal form** requesting:
-   - Brief description
-   - Feds URL
-4. Ticket channel is created automatically
-5. Staff roles are pinged
-6. Staff replies trigger **DM notifications to the ticket owner**
-7. `/close` generates transcripts and deletes the channel
+```mermaid
+flowchart TD
 
----
+A[User clicks Ticket Panel] --> B[Select Ticket Category]
 
-# 📜 Transcript System
+B --> C[Modal Form Opens]
+C --> D[User submits description + Feds URL]
 
-When a ticket is closed the bot:
+D --> E[Bot Creates Ticket Channel]
 
-1. Saves a **text transcript to PostgreSQL**
-2. Generates an **transcript**
-3. Uploads the transcript
-4. Creates a **secure dashboard link**
+E --> F[Staff Roles Pinged]
 
-Staff logs include:
+F --> G[Staff Replies in Ticket]
 
-- Ticket owner
-- Ticket category
-- Brief description
+G --> H[User receives DM Notification]
+
+H --> I[/close command]
+
+I --> J[Transcript Generated]
+J --> K[Transcript Stored in Database]
+K --> L[Transcript available on Dashboard]
+```
+
+1️⃣ Admin runs `/panel`  
+2️⃣ User selects a **ticket category**  
+3️⃣ Bot opens a **modal ticket form**
+
+User submits:
+
+- brief description
 - Feds URL
-- Render dashboard transcript link
-- HTML transcript link
+
+4️⃣ Ticket channel created  
+5️⃣ Staff roles pinged  
+6️⃣ Staff responses trigger **DM alerts to the user**  
+7️⃣ `/close` stores transcript and deletes the ticket
 
 ---
 
-# 🌐 Transcript Dashboard
+# 🌐 Web Dashboard
 
-A secure transcript viewer is hosted on the Render service.
+The bot exposes several endpoints.
 
-Example:
+---
+
+## Transcript Dashboard
 
 ```
 https://your-render-service.onrender.com/transcripts?key=YOUR_KEY
@@ -189,12 +275,9 @@ https://your-render-service.onrender.com/transcripts?key=YOUR_KEY
 
 Features:
 
-- 🔎 Search transcripts by:
-  - channel name
-  - ticket ID
-  - user
-- 📄 View full transcripts in a readable format
-- 🔐 Protected using an access key
+- search transcripts
+- readable message history
+- access-key protected
 
 Example:
 
@@ -204,36 +287,86 @@ https://feds-lol-tickets.onrender.com/transcripts?key=yourkey
 
 ---
 
-# 🛑 Anti-Spam Protection
+## Status Page
 
-The bot prevents ticket abuse by:
+```
+/status
+```
 
-- blocking multiple open tickets per user
-- applying ticket creation cooldowns
-- validating ticket ownership through the database
+Example:
+
+```
+https://your-render-service.onrender.com/status
+```
+
+Displays:
+
+- bot state
+- last login attempt
+- last ready event
+- last disconnect
+- last warning
+- last error
+- last gateway debug message
+
+JSON version:
+
+```
+/status.json
+```
 
 ---
 
-# 📩 User Notifications
+## Runtime Logs
 
-When a **staff member replies** inside a ticket channel:
+```
+/logs
+```
 
-- The ticket owner receives a **DM notification**
-- The DM includes a preview of the staff message
+Example:
 
-Users are **not notified for their own messages**.
+```
+https://your-render-service.onrender.com/logs
+```
+
+Displays recent runtime logs including:
+
+- startup events
+- gateway connection logs
+- warnings
+- errors
+
+JSON logs:
+
+```
+/logs.json
+```
 
 ---
 
-# 🗄️ Database
+## Health Check
 
-The bot automatically creates two tables.
+```
+/healthz
+```
 
-### `tickets`
+Returns:
 
-Stores ticket metadata.
+```
+ok
+```
 
-| Column | Type |
+Used by Render to confirm service health.
+
+---
+
+# 🗄️ Database Schema
+
+Two tables are created automatically.
+
+### tickets
+
+| column | type |
 |------|------|
 | id | SERIAL |
 | guild_id | TEXT |
@@ -247,11 +380,11 @@ Stores ticket metadata.
 | created_at | TIMESTAMP |
 | closed_at | TIMESTAMP |
 
-### `transcripts`
+---
 
-Stores raw message transcripts.
+### transcripts
 
-| Column | Type |
+| column | type |
 |------|------|
 | id | SERIAL |
 | channel_name | TEXT |
@@ -263,64 +396,105 @@ Stores raw message transcripts.
 
 # ☁️ Deploying to Render
 
-Recommended deployment: **Render Web Service**
+Recommended deployment method.
 
 Steps:
 
-1. Create a **Web Service**
+1. Create a **Render Web Service**
+
 2. Connect your GitHub repository
+
 3. Set start command:
 
 ```
 npm start
 ```
 
-4. Add all environment variables in the Render dashboard.
+4. Add environment variables
+
+5. Deploy service
 
 ---
 
 # 🧪 Troubleshooting
 
-### Bot won't start
+### Bot will not start
 
-- Ensure `TOKEN` is correct
-- Check Node.js version (18+)
-- Confirm all environment variables are set
+Check:
 
-### Slash commands not appearing
+- valid bot token
+- Node.js version
+- environment variables
+- PostgreSQL connection
+
+---
+
+### Login Stalled
+
+If `/status` shows:
+
+```
+LOGIN STALLED
+```
+
+and the last debug message is:
+
+```
+Preparing to connect to the gateway...
+```
+
+Check:
+
+- bot token validity
+- Message Content Intent enabled
+- Render networking
+- local login test
+
+---
+
+### Slash commands missing
+
+Run:
 
 ```
 npm run deploy:guild
 ```
 
+---
+
 ### Tickets not creating
 
-Check:
+Verify:
 
-- category IDs are valid
-- support role IDs are correct
-- bot has permission to create channels
+- category IDs
+- support role IDs
+- bot permissions
 
-### Transcript dashboard returns 502
+---
 
-This usually happens when:
+### Transcript dashboard 502
 
-- Render instance is waking up
-- Database connection is still initializing
+Possible causes:
 
-Refreshing after a few seconds should resolve it.
+- Render cold start
+- database initializing
+- recent redeploy
+
+Refreshing usually resolves it.
 
 ---
 
 # 🔐 Security
 
-Never commit `.env` files.
+Never commit `.env`.
 
-If a bot token is leaked:
+If a token leaks:
 
-1. Open the Discord Developer Portal
-2. Regenerate the bot token
-3. Update your deployment environment variables
+1. regenerate token in Discord Developer Portal
+2. update environment variables
+3. redeploy service
+
+Keep `TRANSCRIPT_VIEW_KEY` private.
 
 ---
 
@@ -330,11 +504,9 @@ MIT License
 
 ---
 
-# 👤 Author
+# 👤 Authors
 
 Developed for **feds.lol Support Infrastructure**
-
-Created by:
 
 **[@dxiv](https://github.com/dxiv)**  
 **[@Intro](https://github.com/4VTmNzSJ5PPpIeDy5XeGjgGOq1Vl4cgV)**
