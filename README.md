@@ -278,4 +278,4 @@ MIT License
 
 # 👤 Author
 
-Developed for **feds.lol Support Infrastructure** using **discord.js v14** by **@dxiv & @4VTmNzSJ5PPpIeDy5XeGjgGOq1Vl4cgV**
+Developed for **feds.lol Support Infrastructure** using **discord.js v14** by **[@dxiv](https://github.com/dxiv) & Maintained by [@Intro](https://github.com/4VTmNzSJ5PPpIeDy5XeGjgGOq1Vl4cgV)**
