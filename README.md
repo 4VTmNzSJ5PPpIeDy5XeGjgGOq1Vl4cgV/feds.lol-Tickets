@@ -162,8 +162,8 @@ Expected startup logs:
 When a ticket is closed the bot:
 
 1. Saves a **text transcript to PostgreSQL**
-2. Generates an **HTML transcript**
-3. Uploads the HTML transcript
+2. Generates an **transcript**
+3. Uploads the transcript
 4. Creates a **secure dashboard link**
 
 Staff logs include:
