@@ -1115,7 +1115,12 @@ async function startBot(): Promise<void> {
       text.includes("resume") ||
       text.includes("ready") ||
       text.includes("connecting") ||
-      text.includes("connected")
+      text.includes("connected") ||
+      text.includes("prepare") ||
+      text.includes("socket") ||
+      text.includes("close") ||
+      text.includes("error") ||
+      text.includes("invalid")
     ) {
       updateStatus({
         lastDebug: {
@@ -1142,12 +1147,12 @@ async function startBot(): Promise<void> {
         state: "login_stalled",
         lastWarn: {
           time: isoNow(),
-          warn: "Login has not reached ready after 45 seconds"
+          warn: "Login has not reached ready after 90 seconds"
         }
       });
 
       console.warn(
-        "[boot] Login has not reached ready after 45 seconds"
+        "[boot] Login has not reached ready after 90 seconds"
       );
 
       await sendAdminDm(
@@ -1165,7 +1170,7 @@ async function startBot(): Promise<void> {
         }
       );
     }
-  }, 45000);
+  }, 90000);
 
   console.log("[boot] Logging into Discord...");
 
