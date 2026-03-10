@@ -6,9 +6,7 @@ if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: { rejectUnauthorized: false },
 });
 
 pool.on("error", (err) => {
@@ -33,6 +31,7 @@ async function init() {
       channel_id TEXT NOT NULL UNIQUE,
       user_id TEXT NOT NULL,
       username TEXT NOT NULL,
+      category_key TEXT NOT NULL,
       brief_description TEXT NOT NULL,
       feds_url TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open',
@@ -42,30 +41,24 @@ async function init() {
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_tickets_user_open
+    CREATE INDEX IF NOT EXISTS idx_tickets_guild_user_status
     ON tickets (guild_id, user_id, status)
   `);
 }
 
 async function saveTranscript(channelName, closedBy, content) {
   await pool.query(
-    `INSERT INTO transcripts (channel_name, closed_by, content)
-     VALUES ($1, $2, $3)`,
+    "INSERT INTO transcripts (channel_name, closed_by, content) VALUES ($1, $2, $3)",
     [channelName, closedBy, content]
   );
 }
 
 async function getTranscript(channelName) {
   const result = await pool.query(
-    `SELECT *
-     FROM transcripts
-     WHERE channel_name = $1
-     ORDER BY created_at DESC
-     LIMIT 1`,
+    "SELECT * FROM transcripts WHERE channel_name = $1 ORDER BY created_at DESC LIMIT 1",
     [channelName]
   );
-
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
 
 async function createTicket({
@@ -73,20 +66,16 @@ async function createTicket({
   channelId,
   userId,
   username,
+  categoryKey,
   briefDescription,
-  fedsUrl
+  fedsUrl,
 }) {
   const result = await pool.query(
     `INSERT INTO tickets (
-      guild_id,
-      channel_id,
-      user_id,
-      username,
-      brief_description,
-      feds_url
-    ) VALUES ($1, $2, $3, $4, $5, $6)
+      guild_id, channel_id, user_id, username, category_key, brief_description, feds_url
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *`,
-    [guildId, channelId, userId, username, briefDescription, fedsUrl]
+    [guildId, channelId, userId, username, categoryKey, briefDescription, fedsUrl]
   );
 
   return result.rows[0];
@@ -104,41 +93,38 @@ async function getOpenTicketByUser(guildId, userId) {
     [guildId, userId]
   );
 
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
 
 async function getTicketByChannel(channelId) {
   const result = await pool.query(
-    `SELECT *
-     FROM tickets
-     WHERE channel_id = $1
-     LIMIT 1`,
+    "SELECT * FROM tickets WHERE channel_id = $1 LIMIT 1",
     [channelId]
   );
 
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
 
-async function closeTicket(channelId) {
+async function closeTicketByChannel(channelId) {
   const result = await pool.query(
     `UPDATE tickets
      SET status = 'closed',
          closed_at = NOW()
      WHERE channel_id = $1
+       AND status = 'open'
      RETURNING *`,
     [channelId]
   );
 
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
 
 module.exports = {
-  pool,
   init,
   saveTranscript,
   getTranscript,
   createTicket,
   getOpenTicketByUser,
   getTicketByChannel,
-  closeTicket
+  closeTicketByChannel,
 };
