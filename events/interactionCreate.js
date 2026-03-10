@@ -5,39 +5,54 @@ const {
   ButtonStyle,
   ChannelType,
   PermissionFlagsBits,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
 const db = require("../database.js");
 
 const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
-  ? process.env.SUPPORT_ROLE_IDS.split(",").map(id => id.trim())
+  ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
 const CATEGORY_META = {
-  general_support:    { label: "General Support",      emoji: "<:claim:1478268515117961226>",                color: 0x4240ae, categoryEnv: "CATEGORY_GENERAL_SUPPORT" },
-  report_user:        { label: "Report User",           emoji: "<:report:1478268560471097354>",               color: 0x4240ae, categoryEnv: "CATEGORY_REPORT_USER" },
-  account_recovery:   { label: "Account Recovery",      emoji: "<:recovery:1478268585582268477>",             color: 0x4240ae, categoryEnv: "CATEGORY_ACCOUNT_RECOVERY" },
-  purchase_billing:   { label: "Purchase / Billing",    emoji: "<:purchase:1478267209641099367>",             color: 0x4240ae, categoryEnv: "CATEGORY_PURCHASE_BILLING" },
-  badge_application:  { label: "Badge Application",     emoji: "<:verified_application:1478268606620897391>", color: 0x4240ae, categoryEnv: "CATEGORY_BADGE_APPLICATION" },
+  general_support: {
+    label: "General Support",
+    emoji: "<:claim:1478268515117961226>",
+    color: 0x4240ae,
+    categoryEnv: "CATEGORY_GENERAL_SUPPORT",
+  },
+  report_user: {
+    label: "Report User",
+    emoji: "<:report:1478268560471097354>",
+    color: 0x4240ae,
+    categoryEnv: "CATEGORY_REPORT_USER",
+  },
+  account_recovery: {
+    label: "Account Recovery",
+    emoji: "<:recovery:1478268585582268477>",
+    color: 0x4240ae,
+    categoryEnv: "CATEGORY_ACCOUNT_RECOVERY",
+  },
+  purchase_billing: {
+    label: "Purchase / Billing",
+    emoji: "<:purchase:1478267209641099367>",
+    color: 0x4240ae,
+    categoryEnv: "CATEGORY_PURCHASE_BILLING",
+  },
+  badge_application: {
+    label: "Badge Application",
+    emoji: "<:verified_application:1478268606620897391>",
+    color: 0x4240ae,
+    categoryEnv: "CATEGORY_BADGE_APPLICATION",
+  },
 };
 
-const CHANNEL_NAME_MAP = {
-  general_support:   "support",
-  report_user:       "user",
-  account_recovery:  "recovery",
-  purchase_billing:  "billing",
-  badge_application: "badge",
-};
-
-// userId -> channelId  (in-memory; resets on bot restart)
-const openTickets = new Map();
-
-// channelId -> claimedBy user tag
 const claimedTickets = new Map();
-
-// channelId -> true if escalated
 const escalatedTickets = new Set();
+const ticketCooldowns = new Map();
 
-let ticketCounter = 1;
+const TICKET_COOLDOWN_MS = 30 * 1000;
 
 async function sendLog(guild, channelName, user, action, category) {
   const logId = process.env.LOG_CHANNEL_ID;
@@ -49,8 +64,8 @@ async function sendLog(guild, channelName, user, action, category) {
   const embed = new EmbedBuilder()
     .setTitle(`Ticket ${action}`)
     .addFields(
-      { name: "User",    value: `${user.tag} (${user.id})`, inline: true },
-      { name: "Channel", value: channelName,                inline: true }
+      { name: "User", value: `${user.tag} (${user.id})`, inline: true },
+      { name: "Channel", value: channelName, inline: true }
     )
     .setColor(action === "Opened" ? 0x57f287 : 0xed4245)
     .setTimestamp();
@@ -60,63 +75,189 @@ async function sendLog(guild, channelName, user, action, category) {
   logChannel.send({ embeds: [embed] }).catch(() => {});
 }
 
+function isSupportMember(interaction) {
+  return SUPPORT_ROLE_IDS.some((id) => interaction.member.roles.cache.has(id));
+}
+
+function normaliseFedsUrl(input) {
+  let value = String(input || "").trim();
+
+  value = value.replace(/^@/, "");
+  value = value.replace(/^https?:\/\//i, "");
+  value = value.replace(/^www\./i, "");
+
+  if (value.startsWith("feds.lol/")) return value;
+
+  if (/^[a-zA-Z0-9._-]+$/.test(value)) {
+    return `feds.lol/${value}`;
+  }
+
+  throw new Error("Please enter a valid Feds handle or feds.lol link.");
+}
+
+function extractFedsHandle(fedsUrl) {
+  const cleaned = fedsUrl.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  const parts = cleaned.split("/");
+  return parts[1] || "user";
+}
+
+function slugify(value, max = 20) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, max) || "ticket";
+}
+
+function buildChannelName(briefDescription, fedsUrl) {
+  const left = slugify(briefDescription, 20);
+  const right = slugify(extractFedsHandle(fedsUrl), 20);
+  return `${left}-${right}`.slice(0, 90);
+}
+
 async function closeTicket(channel, guild, user, ticketOwnerId) {
   const owner = await guild.members.fetch(ticketOwnerId).catch(() => null);
 
-  try { await sendLog(guild, channel.name, owner?.user ?? user, "Closed"); } catch (e) { console.error("sendLog failed:", e); }
+  try {
+    await sendLog(guild, channel.name, owner?.user ?? user, "Closed");
+  } catch (e) {
+    console.error("sendLog failed:", e);
+  }
 
-  setTimeout(() => channel.delete().catch(e => console.error("Delete failed:", e)), 5000);
+  await db.closeTicketByChannel(channel.id).catch((e) => {
+    console.error("DB close failed:", e);
+  });
+
+  setTimeout(() => channel.delete().catch((e) => console.error("Delete failed:", e)), 5000);
 }
 
 module.exports = {
   name: "interactionCreate",
 
   async execute(interaction, client) {
-
-    // ── Slash commands ──────────────────────────────────────────────────────────
+    // Slash commands
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);
       if (!command) return;
+
       try {
         await command.execute(interaction, client);
       } catch (err) {
         console.error(err);
         const payload = { content: "An error occurred.", ephemeral: true };
         if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(payload);
+          await interaction.followUp(payload).catch(() => {});
         } else {
-          await interaction.reply(payload);
+          await interaction.reply(payload).catch(() => {});
         }
       }
       return;
     }
 
-    // ── Select menu — open ticket ───────────────────────────────────────────────
+    // Select menu -> show modal
     if (interaction.isStringSelectMenu() && interaction.customId === "ticket_open") {
+      const value = interaction.values[0].toLowerCase();
+      const meta = CATEGORY_META[value];
+
+      if (!meta) {
+        return interaction.reply({
+          content: "Unknown category.",
+          ephemeral: true,
+        });
+      }
+
+      const existing = await db.getOpenTicketByUser(interaction.guild.id, interaction.user.id);
+      if (existing) {
+        return interaction.reply({
+          content: `You already have an open ticket: <#${existing.channel_id}>`,
+          ephemeral: true,
+        });
+      }
+
+      const lastUsed = ticketCooldowns.get(interaction.user.id) || 0;
+      const now = Date.now();
+      if (now - lastUsed < TICKET_COOLDOWN_MS) {
+        const seconds = Math.ceil((TICKET_COOLDOWN_MS - (now - lastUsed)) / 1000);
+        return interaction.reply({
+          content: `Slow down. Wait ${seconds}s before opening another ticket.`,
+          ephemeral: true,
+        });
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`ticket_modal_${value}`)
+        .setTitle(meta.label);
+
+      const briefInput = new TextInputBuilder()
+        .setCustomId("brief_description")
+        .setLabel("Brief description")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMinLength(3)
+        .setMaxLength(80)
+        .setPlaceholder("Login issue, billing issue, profile bug...");
+
+      const fedsInput = new TextInputBuilder()
+        .setCustomId("feds_url")
+        .setLabel("Feds URL / link")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMinLength(2)
+        .setMaxLength(100)
+        .setPlaceholder("feds.lol/dx or just dx");
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(briefInput),
+        new ActionRowBuilder().addComponents(fedsInput)
+      );
+
+      return interaction.showModal(modal);
+    }
+
+    // Modal submit -> create ticket
+    if (interaction.isModalSubmit() && interaction.customId.startsWith("ticket_modal_")) {
       await interaction.deferReply({ ephemeral: true });
 
-      const value = interaction.values[0].toLowerCase();
-      const meta  = CATEGORY_META[value];
+      const categoryKey = interaction.customId.replace("ticket_modal_", "");
+      const meta = CATEGORY_META[categoryKey];
       const { guild, user } = interaction;
 
       if (!meta) {
         return interaction.editReply({ content: "Unknown category." });
       }
 
-      if (openTickets.has(user.id)) {
-        const existing = guild.channels.cache.get(openTickets.get(user.id));
-        if (existing) {
-          return interaction.editReply({
-            content: `You already have an open ticket: ${existing}.`,
-          });
-        }
-        openTickets.delete(user.id);
+      const existing = await db.getOpenTicketByUser(guild.id, user.id);
+      if (existing) {
+        return interaction.editReply({
+          content: `You already have an open ticket: <#${existing.channel_id}>`,
+        });
+      }
+
+      const lastUsed = ticketCooldowns.get(user.id) || 0;
+      const now = Date.now();
+      if (now - lastUsed < TICKET_COOLDOWN_MS) {
+        const seconds = Math.ceil((TICKET_COOLDOWN_MS - (now - lastUsed)) / 1000);
+        return interaction.editReply({
+          content: `Slow down. Wait ${seconds}s before opening another ticket.`,
+        });
+      }
+
+      const briefDescription = interaction.fields.getTextInputValue("brief_description").trim();
+
+      let fedsUrl;
+      try {
+        fedsUrl = normaliseFedsUrl(interaction.fields.getTextInputValue("feds_url"));
+      } catch (err) {
+        return interaction.editReply({ content: err.message });
       }
 
       const supportRoleIds = SUPPORT_ROLE_IDS;
-      const parentId       = process.env[meta.categoryEnv] || null;
-
+      const parentId = process.env[meta.categoryEnv] || null;
       const member = await guild.members.fetch(user.id);
+      const channelName = buildChannelName(briefDescription, fedsUrl);
 
       const overwrites = [
         {
@@ -124,11 +265,24 @@ module.exports = {
           deny: [PermissionFlagsBits.ViewChannel],
         },
         {
-          id: member,
+          id: member.id,
           allow: [
             PermissionFlagsBits.ViewChannel,
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks,
+          ],
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks,
           ],
         },
       ];
@@ -137,35 +291,49 @@ module.exports = {
         const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
         if (role) {
           overwrites.push({
-            id: role,
+            id: role.id,
             allow: [
               PermissionFlagsBits.ViewChannel,
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
               PermissionFlagsBits.ManageMessages,
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.EmbedLinks,
             ],
           });
         }
       }
-
-      const channelName = `${CHANNEL_NAME_MAP[value] ?? value.replace(/_/g, "-")}-${ticketCounter++}`;
 
       const ticketChannel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
         parent: parentId,
         permissionOverwrites: overwrites,
-        topic: `Ticket for ${user.tag} | Category: ${meta.label}`,
+        topic: `Ticket for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`,
       });
 
-      openTickets.set(user.id, ticketChannel.id);
+      await db.createTicket({
+        guildId: guild.id,
+        channelId: ticketChannel.id,
+        userId: user.id,
+        username: user.tag,
+        categoryKey,
+        briefDescription,
+        fedsUrl,
+      });
+
+      ticketCooldowns.set(user.id, now);
 
       const openEmbed = new EmbedBuilder()
         .setTitle(`${meta.emoji} ${meta.label}`)
         .setDescription(
-          `Welcome ${user}, thanks for reaching out!\n\n` +
-          `Please describe your issue and a staff member will assist you soon.\n\n` +
-          `> Press **Close Ticket** below to close this ticket.`
+          `Welcome ${user}, thanks for reaching out.\n\n` +
+          `A staff member will assist you soon.\n\n` +
+          `> Press **Close Ticket** below if your issue is resolved.`
+        )
+        .addFields(
+          { name: "Brief Description", value: briefDescription, inline: false },
+          { name: "Feds URL", value: fedsUrl, inline: false }
         )
         .setColor(meta.color)
         .setFooter({ text: `Opened by ${user.tag}` })
@@ -192,7 +360,7 @@ module.exports = {
       const row = new ActionRowBuilder().addComponents(closeBtn, claimBtn, escalateBtn);
 
       await ticketChannel.send({
-        content: supportRoleIds.map(id => `<@&${id}>`).join(" ") || null,
+        content: supportRoleIds.map((id) => `<@&${id}>`).join(" ") || null,
         embeds: [openEmbed],
         components: [row],
       });
@@ -204,13 +372,12 @@ module.exports = {
       });
     }
 
-    // ── Button — claim ticket ───────────────────────────────────────────────────
+    // Claim ticket
     if (interaction.isButton() && interaction.customId.startsWith("ticket_claim_")) {
       const { channel, user } = interaction;
-      const supportRoleIds = SUPPORT_ROLE_IDS;
 
-      const isSupport = supportRoleIds.some(id => interaction.member.roles.cache.has(id));
-      const isAdmin   = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+      const isSupport = isSupportMember(interaction);
+      const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
       if (!isSupport && !isAdmin) {
         return interaction.reply({ content: "Only staff can claim tickets.", ephemeral: true });
@@ -225,30 +392,29 @@ module.exports = {
 
       claimedTickets.set(channel.id, user.tag);
 
-      const msg = await channel.messages.fetch({ limit: 10 }).then(msgs =>
-        msgs.find(m => m.components?.[0]?.components?.some(c => c.customId?.startsWith("ticket_claim_")))
+      const msg = await channel.messages.fetch({ limit: 10 }).then((msgs) =>
+        msgs.find((m) => m.components?.[0]?.components?.some((c) => c.customId?.startsWith("ticket_claim_")))
       ).catch(() => null);
 
       if (msg) {
         const updatedRow = ActionRowBuilder.from(msg.components[0]);
-        updatedRow.components.forEach(btn => {
+        updatedRow.components.forEach((btn) => {
           if (btn.data.custom_id?.startsWith("ticket_claim_")) btn.setDisabled(true);
           if (escalatedTickets.has(channel.id) && btn.data.custom_id?.startsWith("ticket_escalate_")) btn.setDisabled(true);
         });
         await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
-      await interaction.reply({ content: `Ticket claimed by ${user}.` });
+      return interaction.reply({ content: `Ticket claimed by ${user}.` });
     }
 
-    // ── Button — escalate ticket ────────────────────────────────────────────────
+    // Escalate ticket
     if (interaction.isButton() && interaction.customId.startsWith("ticket_escalate_")) {
       const { channel, user } = interaction;
-      const supportRoleIds = SUPPORT_ROLE_IDS;
       const escalateRoleId = process.env.ESCALATE_ROLE_ID;
 
-      const isSupport = supportRoleIds.some(id => interaction.member.roles.cache.has(id));
-      const isAdmin   = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+      const isSupport = isSupportMember(interaction);
+      const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
       if (!isSupport && !isAdmin) {
         return interaction.reply({ content: "Only staff can escalate tickets.", ephemeral: true });
@@ -264,33 +430,32 @@ module.exports = {
 
       escalatedTickets.add(channel.id);
 
-      const msg = await channel.messages.fetch({ limit: 10 }).then(msgs =>
-        msgs.find(m => m.components?.[0]?.components?.some(c => c.customId?.startsWith("ticket_escalate_")))
+      const msg = await channel.messages.fetch({ limit: 10 }).then((msgs) =>
+        msgs.find((m) => m.components?.[0]?.components?.some((c) => c.customId?.startsWith("ticket_escalate_")))
       ).catch(() => null);
 
       if (msg) {
         const updatedRow = ActionRowBuilder.from(msg.components[0]);
-        updatedRow.components.forEach(btn => {
+        updatedRow.components.forEach((btn) => {
           if (btn.data.custom_id?.startsWith("ticket_escalate_")) btn.setDisabled(true);
           if (claimedTickets.has(channel.id) && btn.data.custom_id?.startsWith("ticket_claim_")) btn.setDisabled(true);
         });
         await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
-      await interaction.reply({
+      return interaction.reply({
         content: `Ticket escalated by ${user}. <@&${escalateRoleId}>`,
       });
     }
 
-    // ── Button — close ticket (shows confirmation) ──────────────────────────────
+    // Close ticket prompt
     if (interaction.isButton() && interaction.customId.startsWith("ticket_close_")) {
-      const { channel, guild, user } = interaction;
-      const ticketOwnerId  = interaction.customId.replace("ticket_close_", "");
-      const supportRoleIds = SUPPORT_ROLE_IDS;
+      const { channel, user } = interaction;
+      const ticketOwnerId = interaction.customId.replace("ticket_close_", "");
 
-      const isOwner   = user.id === ticketOwnerId;
-      const isSupport = supportRoleIds.some(id => interaction.member.roles.cache.has(id));
-      const isAdmin   = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+      const isOwner = user.id === ticketOwnerId;
+      const isSupport = isSupportMember(interaction);
+      const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
       if (!isOwner && !isSupport && !isAdmin) {
         return interaction.reply({
@@ -325,7 +490,7 @@ module.exports = {
       return interaction.reply({ embeds: [confirmEmbed], components: [row], ephemeral: true });
     }
 
-    // ── Button — create transcript ──────────────────────────────────────────────
+    // Create transcript
     if (interaction.isButton() && interaction.customId.startsWith("ticket_transcript_")) {
       await interaction.deferReply({ ephemeral: true });
 
@@ -335,24 +500,24 @@ module.exports = {
         const messages = await channel.messages.fetch({ limit: 100 });
         const content = messages
           .reverse()
-          .map(m => `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}`)
+          .map((m) => `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content || "[no text]"}`)
           .join("\n");
 
         await db.saveTranscript(channel.name, user.tag, content);
-
-        await interaction.editReply({ content: "Transcript saved to database." });
+        return interaction.editReply({ content: "Transcript saved to database." });
       } catch (e) {
         console.error("Transcript save failed:", e);
-        await interaction.editReply({ content: "Failed to save transcript." });
+        return interaction.editReply({ content: "Failed to save transcript." });
       }
     }
 
-    // ── Button — confirm close ──────────────────────────────────────────────────
+    // Confirm close
     if (interaction.isButton() && interaction.customId.startsWith("ticket_confirm_close_")) {
       await interaction.deferUpdate();
 
       const { channel, guild, user } = interaction;
-      const ticketOwnerId = interaction.customId.replace("ticket_confirm_close_", "");
+      const dbTicket = await db.getTicketByChannel(channel.id);
+      const ticketOwnerId = dbTicket?.user_id || interaction.customId.replace("ticket_confirm_close_", "");
 
       const closeEmbed = new EmbedBuilder()
         .setTitle("Ticket Closed")
@@ -362,13 +527,14 @@ module.exports = {
 
       await channel.send({ embeds: [closeEmbed] });
 
-      openTickets.delete(ticketOwnerId);
       claimedTickets.delete(channel.id);
       escalatedTickets.delete(channel.id);
+
       await closeTicket(channel, guild, user, ticketOwnerId);
+      return;
     }
 
-    // ── Button — cancel close ───────────────────────────────────────────────────
+    // Cancel close
     if (interaction.isButton() && interaction.customId === "ticket_cancel_close") {
       return interaction.update({
         content: "Ticket closure cancelled.",
@@ -378,4 +544,3 @@ module.exports = {
     }
   },
 };
-
