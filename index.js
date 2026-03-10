@@ -533,19 +533,27 @@ async function waitForReady(client, loginTimeoutMs = 30_000, readyTimeoutMs = 45
     });
 
     client.once("ready", async () => {
-      try {
-        console.log(`[ready] Logged in as ${client.user.tag}`);
-        client.user.setActivity("feds.lol", {
-          type: ActivityType.Streaming,
-          url: "https://www.feds.lol/register"
-        });
-        console.log("[ready] Activity set");
-      } catch (err) {
-        console.error("[ready] Failed to set activity:", err?.stack || err);
-      }
+  try {
+    console.log(`[ready] Logged in as ${client.user.tag}`);
 
-      await finishOk();
+    client.user.setPresence({
+      status: "online",
+      activities: [
+        {
+          name: "live support at feds.lol",
+          type: ActivityType.Competing,
+          url: "https://www.feds.lol/register"
+        }
+      ]
     });
+
+    console.log("[ready] Streaming status set");
+  } catch (err) {
+    console.error("[ready] Failed to set activity:", err?.stack || err);
+  }
+
+  await finishOk();
+});
 
     try {
       console.log("[boot] About to call client.login()");
