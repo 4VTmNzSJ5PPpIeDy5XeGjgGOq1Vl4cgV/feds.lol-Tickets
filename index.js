@@ -460,8 +460,9 @@ async function waitForReady(client, loginTimeoutMs = 30_000, readyTimeoutMs = 45
     };
 
     const loginTimer = setTimeout(() => {
-      finishErr(new Error(`Login timed out after ${loginTimeoutMs}ms`));
-    }, loginTimeoutMs);
+  console.error("[boot] login timeout hit at", new Date().toISOString());
+  finishErr(new Error(`Login timed out after ${loginTimeoutMs}ms`));
+}, loginTimeoutMs);
 
     const readyTimer = setTimeout(() => {
       finishErr(new Error(`Ready event did not fire within ${readyTimeoutMs}ms`));
@@ -554,18 +555,20 @@ async function waitForReady(client, loginTimeoutMs = 30_000, readyTimeoutMs = 45
 
   await finishOk();
 });
+    
+console.log("[boot] login attempt starting at", new Date().toISOString());
 
-    try {
-      console.log("[boot] About to call client.login()");
-      await client.login(TOKEN);
-      loginResolved = true;
-      clearTimeout(loginTimer);
-      console.log("[boot] client.login() resolved successfully");
-    } catch (err) {
-      if (!loginResolved) {
-        await finishErr(err);
-      }
-    }
+try {
+  console.log("[boot] About to call client.login()");
+  await client.login(TOKEN);
+  loginResolved = true;
+  clearTimeout(loginTimer);
+  console.log("[boot] client.login() resolved successfully");
+} catch (err) {
+  if (!loginResolved) {
+    await finishErr(err);
+  }
+}
   });
 }
 
