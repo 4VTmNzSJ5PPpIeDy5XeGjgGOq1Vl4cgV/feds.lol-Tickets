@@ -43,15 +43,230 @@ console.log("[boot] https_proxy:", process.env.https_proxy || "not set");
 console.log("[boot] ALL_PROXY:", process.env.ALL_PROXY || "not set");
 console.log("[boot] all_proxy:", process.env.all_proxy || "not set");
 
-http
-  .createServer((req, res) => {
-    if (req.url === "/healthz") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      return res.end("ok");
-    }
+const { URL } = require("url");
+const db = require("./database.js");
 
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("OK");
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderLayout(title, body) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: #0b0b0f;
+      color: #f3f3f5;
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1, h2 {
+      margin: 0 0 16px;
+    }
+    a {
+      color: #9bb8ff;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    .card {
+      background: #14141b;
+      border: 1px solid #262633;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    }
+    .meta {
+      color: #a7a7b5;
+      font-size: 14px;
+      margin-top: 6px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+    .search {
+      width: 100%;
+      max-width: 420px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #2d2d3a;
+      background: #101017;
+      color: #f3f3f5;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #101017;
+      border: 1px solid #262633;
+      border-radius: 14px;
+      padding: 16px;
+      line-height: 1.45;
+      overflow-x: auto;
+      color: #ededf2;
+    }
+    .small {
+      font-size: 13px;
+      color: #a7a7b5;
+    }
+    .pill {
+      display: inline-block;
+      font-size: 12px;
+      color: #d5d5df;
+      background: #1b1b25;
+      border: 1px solid #2b2b39;
+      border-radius: 999px;
+      padding: 4px 10px;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    ${body}
+  </div>
+</body>
+</html>`;
+}
+
+function isAuthorised(urlObj) {
+  const expected = process.env.TRANSCRIPT_VIEW_KEY;
+  if (!expected) return false;
+  return urlObj.searchParams.get("key") === expected;
+}
+
+http
+  .createServer(async (req, res) => {
+    try {
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const pathname = urlObj.pathname;
+
+      if (pathname === "/healthz") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        return res.end("ok");
+      }
+
+      if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
+        if (!isAuthorised(urlObj)) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          return res.end("Forbidden");
+        }
+
+        if (pathname === "/transcripts") {
+          const rows = await db.listTranscripts(200);
+          const q = (urlObj.searchParams.get("q") || "").trim().toLowerCase();
+
+          const filtered = q
+            ? rows.filter((row) =>
+                String(row.channel_name).toLowerCase().includes(q) ||
+                String(row.closed_by).toLowerCase().includes(q) ||
+                String(row.id).includes(q)
+              )
+            : rows;
+
+          const cards = filtered.length
+            ? filtered.map((row) => `
+              <div class="card">
+                <div>
+                  <span class="pill">#${escapeHtml(row.id)}</span>
+                  <strong>${escapeHtml(row.channel_name)}</strong>
+                </div>
+                <div class="meta">
+                  Closed by ${escapeHtml(row.closed_by)} • ${new Date(row.created_at).toLocaleString("en-GB")}
+                </div>
+                <div style="margin-top:12px;">
+                  <a href="/transcripts/${row.id}?key=${encodeURIComponent(urlObj.searchParams.get("key"))}">Open transcript</a>
+                </div>
+              </div>
+            `).join("")
+            : `<div class="card">No transcripts found.</div>`;
+
+          const html = renderLayout(
+            "Transcripts",
+            `
+            <div class="topbar">
+              <div>
+                <h1>Ticket Transcripts</h1>
+                <div class="small">Latest ${filtered.length} result(s)</div>
+              </div>
+              <form method="GET" action="/transcripts">
+                <input type="hidden" name="key" value="${escapeHtml(urlObj.searchParams.get("key") || "")}" />
+                <input class="search" type="text" name="q" placeholder="Search by channel, closer, or ID..." value="${escapeHtml(q)}" />
+              </form>
+            </div>
+            ${cards}
+            `
+          );
+
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          return res.end(html);
+        }
+
+        const idMatch = pathname.match(/^\/transcripts\/(\d+)$/);
+        if (idMatch) {
+          const transcript = await db.getTranscriptById(Number(idMatch[1]));
+
+          if (!transcript) {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            return res.end("Transcript not found");
+          }
+
+          const html = renderLayout(
+            `Transcript #${transcript.id}`,
+            `
+            <div class="topbar">
+              <div>
+                <h1>Transcript #${escapeHtml(transcript.id)}</h1>
+                <div class="small">
+                  <a href="/transcripts?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">← Back to transcript list</a>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div><strong>Channel:</strong> ${escapeHtml(transcript.channel_name)}</div>
+              <div class="meta">Closed by ${escapeHtml(transcript.closed_by)} • ${new Date(transcript.created_at).toLocaleString("en-GB")}</div>
+            </div>
+
+            <pre>${escapeHtml(transcript.content)}</pre>
+            `
+          );
+
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          return res.end(html);
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        return res.end("Not found");
+      }
+
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("OK");
+    } catch (err) {
+      console.error("[web] route error:", err?.stack || err);
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Server error");
+    }
   })
   .listen(process.env.PORT || 3000, "0.0.0.0", () => {
     console.log(`[boot] Keep-alive server running on port ${process.env.PORT || 3000}`);
