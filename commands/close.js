@@ -3,9 +3,6 @@ const {
   EmbedBuilder,
   PermissionFlagsBits,
 } = require("discord.js");
-const transcripts = require("discord-html-transcripts");
-const fetch = require("node-fetch");
-const FormData = require("form-data");
 const db = require("../database.js");
 
 const SUPPORT_ROLE_IDS = process.env.SUPPORT_ROLE_IDS
@@ -108,37 +105,6 @@ module.exports = {
           await guild.channels.fetch(logId).catch(() => null);
 
         if (logChannel?.isTextBased()) {
-          const transcript = await transcripts.createTranscript(channel, {
-            limit: -1,
-            filename: `transcript-${channel.name}.html`,
-            poweredBy: false,
-          });
-
-          let catboxTranscriptUrl = null;
-
-          try {
-            const form = new FormData();
-            form.append("reqtype", "fileupload");
-            form.append("userhash", "");
-            form.append("fileToUpload", transcript.attachment, {
-              filename: `transcript-${channel.name}.html`,
-              contentType: "text/html",
-            });
-
-            const response = await fetch("https://catbox.moe/user/api.php", {
-              method: "POST",
-              body: form,
-              timeout: 8000,
-            });
-
-            const text = await response.text();
-            if (text && text.startsWith("https://")) {
-              catboxTranscriptUrl = text;
-            }
-          } catch (e) {
-            console.error("Catbox upload failed:", e.message);
-          }
-
           const logEmbed = new EmbedBuilder()
             .setTitle("Transcript Saved")
             .addFields(
@@ -167,28 +133,11 @@ module.exports = {
             });
           }
 
-          if (catboxTranscriptUrl) {
-            logEmbed.addFields({
-              name: "HTML Transcript",
-              value: `[Open uploaded HTML](${catboxTranscriptUrl})`,
-            });
-
-            await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
-          } else {
-            logEmbed.addFields({
-              name: "HTML Transcript",
-              value: "Upload failed, so the HTML transcript is attached below.",
-            });
-
-            await logChannel.send({
-              embeds: [logEmbed],
-              files: [transcript],
-            }).catch(() => {});
-          }
+          await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
         }
       }
     } catch (e) {
-      console.error("Transcript creation/logging failed:", e);
+      console.error("Transcript logging failed:", e);
     }
 
     try {
