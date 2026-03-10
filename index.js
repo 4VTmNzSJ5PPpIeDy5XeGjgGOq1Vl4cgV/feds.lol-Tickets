@@ -11,7 +11,7 @@ const {
   Partials
 } = require("discord.js");
 
-console.log("==> BUILD MARKER: 2026-03-10-WEB-LOGIN-HARDENED-V1");
+console.log("==> BUILD MARKER: 2026-03-10-WEB-LOGIN-HARDENED-V2");
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -162,9 +162,12 @@ async function main() {
   });
 
   client.on("shardDisconnect", (event, shardId) => {
-    console.error(
-      `[shardDisconnect] shard=${shardId} code=${event?.code ?? "unknown"} reason=${event?.reason || "unknown"}`
-    );
+    console.error(`[shardDisconnect] shard=${shardId}`);
+    console.error("[shardDisconnect event]", {
+      code: event?.code,
+      reason: event?.reason,
+      wasClean: event?.wasClean
+    });
   });
 
   client.on("shardReconnecting", (shardId) => {
@@ -175,15 +178,27 @@ async function main() {
     console.log(`[shardResume] shard=${shardId} replayed=${replayedEvents}`);
   });
 
+  client.on("shardReady", (shardId, unavailableGuilds) => {
+    console.log(
+      `[shardReady] shard=${shardId} unavailableGuilds=${unavailableGuilds?.size ?? 0}`
+    );
+  });
+
+  client.on("shardConnecting", (shardId) => {
+    console.log(`[shardConnecting] shard=${shardId}`);
+  });
+
   client.on("debug", (msg) => {
     const lower = msg.toLowerCase();
+
     if (
       lower.includes("gateway") ||
       lower.includes("session") ||
       lower.includes("heartbeat") ||
       lower.includes("identify") ||
       lower.includes("resume") ||
-      lower.includes("shard")
+      lower.includes("shard") ||
+      lower.includes("ready")
     ) {
       if (!lower.includes("provided token")) {
         console.log("[client debug]", msg);
@@ -197,7 +212,7 @@ async function main() {
     );
   });
 
-  client.once("clientReady", () => {
+  client.once("ready", () => {
     readyFired = true;
     console.log(`[ready] Logged in as ${client.user.tag}`);
 
@@ -211,6 +226,10 @@ async function main() {
       console.error("[ready] Failed to set activity:", err?.stack || err);
     }
   });
+
+  setInterval(() => {
+    console.log("[heartbeat] process alive", new Date().toISOString());
+  }, 15000);
 
   setTimeout(() => {
     if (!readyFired) {
