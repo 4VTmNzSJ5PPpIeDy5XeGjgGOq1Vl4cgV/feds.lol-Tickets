@@ -158,10 +158,324 @@ function isTranscriptAuthorised(urlObj) {
 }
 
 
-
 /* -------------------------------------------------------------------------- */
 /* Web server                                                                  */
 /* -------------------------------------------------------------------------- */
+
+
+
+function statusTone(state) {
+  switch (state) {
+    case "ready": return { label: "READY", color: "#3fb950" };
+    case "logging_in": return { label: "LOGGING IN", color: "#d29922" };
+    case "login_stalled": return { label: "LOGIN STALLED", color: "#f85149" };
+    case "reconnecting": return { label: "RECONNECTING", color: "#d29922" };
+    case "disconnected": return { label: "DISCONNECTED", color: "#f85149" };
+    case "startup_failed": return { label: "STARTUP FAILED", color: "#f85149" };
+    default: return { label: String(state || "UNKNOWN").toUpperCase(), color: "#8b949e" };
+  }
+}
+
+function levelTone(level) {
+  switch (level) {
+    case "error": return "#f85149";
+    case "warn": return "#d29922";
+    default: return "#3b82f6";
+  }
+}
+
+function basePage(title, body) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)}</title>
+<style>
+:root{
+  --bg:#0b0b0f;
+  --panel:#12131a;
+  --panel-2:#161823;
+  --border:#262b36;
+  --text:#edf2f7;
+  --muted:#9aa4b2;
+  --link:#8ab4ff;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:linear-gradient(180deg,#0b0b0f 0%,#0f1118 100%);
+  color:var(--text);
+  font-family:Inter,Segoe UI,Arial,sans-serif;
+}
+.wrap{
+  max-width:1200px;
+  margin:0 auto;
+  padding:24px;
+}
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  margin-bottom:24px;
+  flex-wrap:wrap;
+}
+.title{
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:-0.02em;
+}
+.subtitle{
+  color:var(--muted);
+  margin-top:6px;
+  font-size:14px;
+}
+.nav{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.nav a{
+  color:var(--text);
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:10px 14px;
+  text-decoration:none;
+  font-size:14px;
+}
+.nav a:hover{
+  border-color:#3b82f6;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(12,1fr);
+  gap:16px;
+}
+.card{
+  grid-column:span 12;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:18px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.card h2{
+  margin:0 0 12px;
+  font-size:16px;
+}
+.kpi{
+  grid-column:span 3;
+}
+.kpi-value{
+  font-size:24px;
+  font-weight:700;
+  margin-top:6px;
+}
+.kpi-label{
+  color:var(--muted);
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 12px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  border:1px solid transparent;
+}
+.muted{
+  color:var(--muted);
+}
+.code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;
+}
+.stack{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.row{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  padding:12px 0;
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+.row:last-child{
+  border-bottom:none;
+}
+.logs{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.log{
+  border:1px solid var(--border);
+  background:var(--panel-2);
+  border-radius:12px;
+  padding:12px 14px;
+}
+.log-top{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:8px;
+  flex-wrap:wrap;
+}
+.log-level{
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.log-message{
+  white-space:pre-wrap;
+  word-break:break-word;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;
+  line-height:1.5;
+}
+a{
+  color:var(--link);
+}
+pre{
+  white-space:pre-wrap;
+  word-break:break-word;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:14px;
+  margin:0;
+}
+@media (max-width: 900px){
+  .kpi{ grid-column:span 6; }
+}
+@media (max-width: 640px){
+  .kpi{ grid-column:span 12; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  ${body}
+</div>
+</body>
+</html>`;
+}
+
+function renderStatusPage() {
+  const tone = statusTone(botStatus.state);
+
+  const details = [
+    ["State", tone.label],
+    ["Started At", botStatus.startedAt || "—"],
+    ["Last Login Attempt", botStatus.lastLoginAttempt || "—"],
+    ["Last Ready", botStatus.lastReady || "—"],
+    ["Last Disconnect", botStatus.lastDisconnect ? JSON.stringify(botStatus.lastDisconnect, null, 2) : "—"],
+    ["Last Warning", botStatus.lastWarn ? JSON.stringify(botStatus.lastWarn, null, 2) : "—"],
+    ["Last Error", botStatus.lastError ? JSON.stringify(botStatus.lastError, null, 2) : "—"],
+    ["Last Debug", botStatus.lastDebug ? JSON.stringify(botStatus.lastDebug, null, 2) : "—"]
+  ];
+
+  const rows = details.map(([label, value]) => `
+    <div class="row">
+      <div class="muted">${escapeHtml(label)}</div>
+      <div class="code" style="max-width:65%; text-align:right;">${escapeHtml(value)}</div>
+    </div>
+  `).join("");
+
+  return basePage("Feds Agent Status", `
+    <div class="topbar">
+      <div>
+        <div class="title">Feds Agent Status</div>
+        <div class="subtitle">Live runtime overview for the bot and web service.</div>
+      </div>
+      <div class="nav">
+        <a href="/status">Status</a>
+        <a href="/logs">Logs</a>
+        <a href="/status.json">Status JSON</a>
+        <a href="/logs.json">Logs JSON</a>
+        <a href="/healthz">Health</a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card kpi">
+        <div class="kpi-label">Service</div>
+        <div class="kpi-value">feds-agent</div>
+      </div>
+
+      <div class="card kpi">
+        <div class="kpi-label">Current State</div>
+        <div class="kpi-value">
+          <span class="badge" style="background:${tone.color}22;border-color:${tone.color};color:${tone.color}">
+            ${escapeHtml(tone.label)}
+          </span>
+        </div>
+      </div>
+
+      <div class="card kpi">
+        <div class="kpi-label">Runtime Logs</div>
+        <div class="kpi-value">${runtimeLogs.length}</div>
+      </div>
+
+      <div class="card kpi">
+        <div class="kpi-label">Now</div>
+        <div class="kpi-value code">${escapeHtml(new Date().toISOString())}</div>
+      </div>
+
+      <div class="card">
+        <h2>Bot State</h2>
+        <div class="stack">
+          ${rows}
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function renderLogsPage() {
+  const logsHtml = runtimeLogs.length
+    ? runtimeLogs.slice().reverse().map((entry) => `
+      <div class="log">
+        <div class="log-top">
+          <div class="log-level" style="color:${levelTone(entry.level)}">${escapeHtml(entry.level)}</div>
+          <div class="muted code">${escapeHtml(entry.time)}</div>
+        </div>
+        <div class="log-message">${escapeHtml(entry.message)}</div>
+      </div>
+    `).join("")
+    : `<div class="card">No runtime logs captured yet.</div>`;
+
+  return basePage("Feds Agent Logs", `
+    <div class="topbar">
+      <div>
+        <div class="title">Feds Agent Logs</div>
+        <div class="subtitle">Latest ${runtimeLogs.length} in-memory runtime events.</div>
+      </div>
+      <div class="nav">
+        <a href="/status">Status</a>
+        <a href="/logs">Logs</a>
+        <a href="/status.json">Status JSON</a>
+        <a href="/logs.json">Logs JSON</a>
+        <a href="/healthz">Health</a>
+      </div>
+    </div>
+
+    <div class="logs">
+      ${logsHtml}
+    </div>
+  `);
+}
 
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
@@ -179,6 +493,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === "/status") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderStatusPage());
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
+    }
+
+    if (pathname === "/status.json") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         service: "feds-agent",
@@ -190,6 +511,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === "/logs") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderLogsPage());
+      console.log(`[web] finished in ${Date.now() - started}ms`);
+      return;
+    }
+
+    if (pathname === "/logs.json") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         service: "feds-agent",
@@ -236,20 +564,29 @@ const server = http.createServer(async (req, res) => {
           : `<div class="card">No transcripts found.</div>`;
 
         const html = `
+          <div class="topbar">
+            <div>
+              <div class="title">Ticket Transcripts</div>
+              <div class="subtitle">Latest ${filtered.length} result(s)</div>
+            </div>
+            <div class="nav">
+              <a href="/status">Status</a>
+              <a href="/logs">Logs</a>
+            </div>
+          </div>
+
           <div class="card">
-            <strong>Ticket Transcripts</strong>
-            <div class="meta">Latest ${filtered.length} result(s)</div>
-            <br>
             <form method="GET" action="/transcripts">
               <input type="hidden" name="key" value="${escapeHtml(urlObj.searchParams.get("key") || "")}">
               <input type="text" name="q" value="${escapeHtml(q)}" placeholder="Search by channel, closer, or ID">
             </form>
           </div>
+
           ${cards}
         `;
 
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(renderLayout("Ticket Transcripts", html));
+        res.end(basePage("Ticket Transcripts", html));
         console.log(`[web] finished in ${Date.now() - started}ms`);
         return;
       }
@@ -267,21 +604,31 @@ const server = http.createServer(async (req, res) => {
         }
 
         const html = `
+          <div class="topbar">
+            <div>
+              <div class="title">Transcript #${escapeHtml(transcript.id)}</div>
+              <div class="subtitle">${escapeHtml(transcript.channel_name)}</div>
+            </div>
+            <div class="nav">
+              <a href="/transcripts?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">Back to transcripts</a>
+              <a href="/status">Status</a>
+              <a href="/logs">Logs</a>
+            </div>
+          </div>
+
           <div class="card">
             <strong>Channel:</strong> ${escapeHtml(transcript.channel_name)}
             <div class="meta">
               Closed by ${escapeHtml(transcript.closed_by)}
               • ${new Date(transcript.created_at).toLocaleString("en-GB")}
             </div>
-            <br>
-            <a href="/transcripts?key=${encodeURIComponent(urlObj.searchParams.get("key") || "")}">← Back to transcript list</a>
           </div>
 
           <pre>${escapeHtml(transcript.content)}</pre>
         `;
 
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(renderLayout(`Transcript #${transcript.id}`, html));
+        res.end(basePage(`Transcript #${transcript.id}`, html));
         console.log(`[web] finished in ${Date.now() - started}ms`);
         return;
       }
@@ -300,13 +647,6 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end("Server error");
   }
-});
-
-server.keepAliveTimeout = 120000;
-server.headersTimeout = 121000;
-
-server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
-  console.log(`[boot] Web server running on ${process.env.PORT || 3000}`);
 });
 
 
