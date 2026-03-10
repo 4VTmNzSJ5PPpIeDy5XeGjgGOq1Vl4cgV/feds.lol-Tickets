@@ -22,7 +22,7 @@ module.exports = {
         "Need help? Select a category below to open a ticket. Our team will be with you shortly."
       )
       .setColor(0x4240ae)
-      .setFooter({ text: "feds.lol Support - support@feds.lol" })
+      .setFooter({ text: "feds.lol Support • support@feds.lol" })
       .setImage("https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png?ex=69b05015&is=69aefe95&hm=f45315fbba3cf03f400f245d90371201959632c3a56234d2c651415c62b11ab7&");
 
     const menu = new StringSelectMenuBuilder()
@@ -58,7 +58,11 @@ module.exports = {
 
     const row = new ActionRowBuilder().addComponents(menu);
 
-    await interaction.channel.send({ embeds: [embed], components: [row] });
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [row],
+    });
+
     await interaction.editReply({ content: "Panel sent!" });
   },
 };
