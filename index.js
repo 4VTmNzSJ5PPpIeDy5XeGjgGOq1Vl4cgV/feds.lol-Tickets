@@ -11,7 +11,7 @@ const {
   Partials
 } = require("discord.js");
 
-console.log("==> BUILD MARKER: 2026-03-09-LOGIN-CLEAN-V1");
+console.log("==> BUILD MARKER: 2026-03-10-WEB-LOGIN-HARDENED-V1");
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -121,31 +121,58 @@ function loadEvents(client) {
   }
 }
 
+function loginWithTimeout(client, token, timeoutMs = 30000) {
+  return Promise.race([
+    client.login(token),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Login timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    })
+  ]);
+}
+
 async function main() {
   console.log("[boot] Creating Discord client");
 
   const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
-  ],
-  partials: [Partials.Channel]
-});
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages
+    ],
+    partials: [Partials.Channel]
+  });
 
   client.commands = new Collection();
+
+  let readyFired = false;
 
   client.on("error", (err) => {
     console.error("[client error]", err?.stack || err);
   });
 
-  client.on("shardError", (err, shardId) => {
-    console.error(`[shard error] shard=${shardId}`, err?.stack || err);
-  });
-
   client.on("warn", (msg) => {
     console.warn("[client warn]", msg);
+  });
+
+  client.on("shardError", (err, shardId) => {
+    console.error(`[shardError] shard=${shardId}`, err?.stack || err);
+  });
+
+  client.on("shardDisconnect", (event, shardId) => {
+    console.error(
+      `[shardDisconnect] shard=${shardId} code=${event?.code ?? "unknown"} reason=${event?.reason || "unknown"}`
+    );
+  });
+
+  client.on("shardReconnecting", (shardId) => {
+    console.log(`[shardReconnecting] shard=${shardId}`);
+  });
+
+  client.on("shardResume", (shardId, replayedEvents) => {
+    console.log(`[shardResume] shard=${shardId} replayed=${replayedEvents}`);
   });
 
   client.on("debug", (msg) => {
@@ -154,10 +181,13 @@ async function main() {
       lower.includes("gateway") ||
       lower.includes("session") ||
       lower.includes("heartbeat") ||
-      lower.includes("provided token") ||
-      lower.includes("429")
+      lower.includes("identify") ||
+      lower.includes("resume") ||
+      lower.includes("shard")
     ) {
-      console.log("[client debug]", msg);
+      if (!lower.includes("provided token")) {
+        console.log("[client debug]", msg);
+      }
     }
   });
 
@@ -168,6 +198,7 @@ async function main() {
   });
 
   client.once("clientReady", () => {
+    readyFired = true;
     console.log(`[ready] Logged in as ${client.user.tag}`);
 
     try {
@@ -181,6 +212,12 @@ async function main() {
     }
   });
 
+  setTimeout(() => {
+    if (!readyFired) {
+      console.error("[watchdog] ready event did not fire within 45s");
+    }
+  }, 45000);
+
   await loadDatabase();
   loadCommands(client);
   loadEvents(client);
@@ -188,11 +225,10 @@ async function main() {
   console.log("[boot] About to call client.login()");
 
   try {
-    await client.login(TOKEN);
+    await loginWithTimeout(client, TOKEN, 30000);
     console.log("[boot] client.login() resolved successfully");
   } catch (err) {
-    console.error("[boot] Failed to login full error:", err);
-    console.error("[boot] Failed to login stack:", err?.stack);
+    console.error("[boot] Failed to login full error:", err?.stack || err);
     process.exit(1);
   }
 }
