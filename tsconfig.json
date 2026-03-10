@@ -10,8 +10,7 @@
     "skipLibCheck": true,
     "strict": true,
     "noImplicitAny": false,
-    "resolveJsonModule": true,
-    "types": ["node"]
+    "resolveJsonModule": true
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]
