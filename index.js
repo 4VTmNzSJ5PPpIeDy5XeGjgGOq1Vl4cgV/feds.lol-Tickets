@@ -907,26 +907,27 @@ async function startBot() {
     console.warn("[client warn]", msg);
   });
 
-  client.on("debug", (msg) => {
-    const text = String(msg || "");
-    const lower = text.toLowerCase();
-
+    client.on("debug", (msg) => {
+    const text = String(msg || "").toLowerCase();
+  
     if (
-      lower.includes("gateway") ||
-      lower.includes("identify") ||
-      lower.includes("session") ||
-      lower.includes("heartbeat") ||
-      lower.includes("resume") ||
-      lower.includes("ready")
+      text.includes("gateway") ||
+      text.includes("identify") ||
+      text.includes("session") ||
+      text.includes("heartbeat") ||
+      text.includes("resume") ||
+      text.includes("ready") ||
+      text.includes("connecting") ||
+      text.includes("connected")
     ) {
       updateStatus({
         lastDebug: {
           time: isoNow(),
-          message: text
+          message: msg
         }
       });
-
-      console.log("[client debug]", text);
+  
+      console.log("[client debug]", msg);
     }
   });
 
