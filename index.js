@@ -11,7 +11,7 @@ const {
   Partials
 } = require("discord.js");
 
-console.log("==> BUILD MARKER: 2026-03-10-WEB-LOGIN-HARDENED-V2");
+console.log("==> BUILD MARKER: 2026-03-10-GATEWAY-BACKOFF-V1");
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err?.stack || err);
@@ -45,10 +45,15 @@ console.log("[boot] all_proxy:", process.env.all_proxy || "not set");
 
 http
   .createServer((req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      return res.end("ok");
+    }
+
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("OK");
   })
-  .listen(process.env.PORT || 3000, () => {
+  .listen(process.env.PORT || 3000, "0.0.0.0", () => {
     console.log(`[boot] Keep-alive server running on port ${process.env.PORT || 3000}`);
   });
 
@@ -57,7 +62,6 @@ async function loadDatabase() {
   const db = require("./database.js");
   await db.init();
   console.log("[boot] Database ready");
-  return db;
 }
 
 function loadCommands(client) {
@@ -121,20 +125,58 @@ function loadEvents(client) {
   }
 }
 
-function loginWithTimeout(client, token, timeoutMs = 30000) {
-  return Promise.race([
-    client.login(token),
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Login timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    })
-  ]);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function main() {
-  console.log("[boot] Creating Discord client");
+function parseResetMs(line) {
+  const m = String(line || "").match(/Reset\s+(\d+)\s+\((\d+)ms left\)/i);
+  if (!m) return null;
+  const msLeft = Number(m[2]);
+  return Number.isFinite(msLeft) ? msLeft : null;
+}
 
+function createBackoffManager() {
+  return {
+    attempt: 0,
+    nextConnectAt: 0,
+    baseDelayMs: 30_000,
+    maxDelayMs: 10 * 60_000,
+    jitterMaxMs: 1500,
+
+    reset() {
+      this.attempt = 0;
+      this.nextConnectAt = 0;
+    },
+
+    schedule(waitMs, reason) {
+      const jitter = Math.floor(Math.random() * this.jitterMaxMs);
+      const total = waitMs + jitter;
+      this.nextConnectAt = Date.now() + total;
+      console.warn("[backoff] scheduled", {
+        reason,
+        wait_ms: total,
+        next: new Date(this.nextConnectAt).toISOString()
+      });
+      return total;
+    },
+
+    scheduleExponential(reason) {
+      const raw = Math.min(
+        Math.floor(this.baseDelayMs * Math.pow(1.8, this.attempt)),
+        this.maxDelayMs
+      );
+      this.attempt += 1;
+      return this.schedule(raw, reason);
+    },
+
+    getRemainingMs() {
+      return Math.max(0, this.nextConnectAt - Date.now());
+    }
+  };
+}
+
+function createClient() {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -146,113 +188,209 @@ async function main() {
   });
 
   client.commands = new Collection();
+  return client;
+}
 
-  let readyFired = false;
+async function waitForReady(client, loginTimeoutMs = 30_000, readyTimeoutMs = 45_000) {
+  let saw429ResetMs = null;
+  let sawGateway429 = false;
 
-  client.on("error", (err) => {
-    console.error("[client error]", err?.stack || err);
-  });
+  return await new Promise(async (resolve, reject) => {
+    let finished = false;
+    let loginResolved = false;
 
-  client.on("warn", (msg) => {
-    console.warn("[client warn]", msg);
-  });
+    const cleanup = async () => {
+      clearTimeout(loginTimer);
+      clearTimeout(readyTimer);
+      client.removeAllListeners("error");
+      client.removeAllListeners("warn");
+      client.removeAllListeners("shardError");
+      client.removeAllListeners("shardDisconnect");
+      client.removeAllListeners("shardReconnecting");
+      client.removeAllListeners("shardResume");
+      client.removeAllListeners("shardReady");
+      client.removeAllListeners("shardConnecting");
+      client.removeAllListeners("debug");
+      client.removeAllListeners("ready");
+    };
 
-  client.on("shardError", (err, shardId) => {
-    console.error(`[shardError] shard=${shardId}`, err?.stack || err);
-  });
+    const finishOk = async () => {
+      if (finished) return;
+      finished = true;
+      await cleanup();
+      resolve({ sawGateway429, saw429ResetMs });
+    };
 
-  client.on("shardDisconnect", (event, shardId) => {
-    console.error(`[shardDisconnect] shard=${shardId}`);
-    console.error("[shardDisconnect event]", {
-      code: event?.code,
-      reason: event?.reason,
-      wasClean: event?.wasClean
+    const finishErr = async (err) => {
+      if (finished) return;
+      finished = true;
+      await cleanup();
+      reject(err);
+    };
+
+    const loginTimer = setTimeout(() => {
+      finishErr(new Error(`Login timed out after ${loginTimeoutMs}ms`));
+    }, loginTimeoutMs);
+
+    const readyTimer = setTimeout(() => {
+      finishErr(new Error(`Ready event did not fire within ${readyTimeoutMs}ms`));
+    }, readyTimeoutMs);
+
+    client.on("error", (err) => {
+      console.error("[client error]", err?.stack || err);
     });
-  });
 
-  client.on("shardReconnecting", (shardId) => {
-    console.log(`[shardReconnecting] shard=${shardId}`);
-  });
+    client.on("warn", (msg) => {
+      console.warn("[client warn]", msg);
+    });
 
-  client.on("shardResume", (shardId, replayedEvents) => {
-    console.log(`[shardResume] shard=${shardId} replayed=${replayedEvents}`);
-  });
+    client.on("shardError", (err, shardId) => {
+      console.error(`[shardError] shard=${shardId}`, err?.stack || err);
+    });
 
-  client.on("shardReady", (shardId, unavailableGuilds) => {
-    console.log(
-      `[shardReady] shard=${shardId} unavailableGuilds=${unavailableGuilds?.size ?? 0}`
-    );
-  });
+    client.on("shardDisconnect", (event, shardId) => {
+      console.error(`[shardDisconnect] shard=${shardId}`, {
+        code: event?.code,
+        reason: event?.reason,
+        wasClean: event?.wasClean
+      });
+    });
 
-  client.on("shardConnecting", (shardId) => {
-    console.log(`[shardConnecting] shard=${shardId}`);
-  });
+    client.on("shardReconnecting", (shardId) => {
+      console.log(`[shardReconnecting] shard=${shardId}`);
+    });
 
-  client.on("debug", (msg) => {
-    const lower = msg.toLowerCase();
+    client.on("shardResume", (shardId, replayedEvents) => {
+      console.log(`[shardResume] shard=${shardId} replayed=${replayedEvents}`);
+    });
 
-    if (
-      lower.includes("gateway") ||
-      lower.includes("session") ||
-      lower.includes("heartbeat") ||
-      lower.includes("identify") ||
-      lower.includes("resume") ||
-      lower.includes("shard") ||
-      lower.includes("ready")
-    ) {
-      if (!lower.includes("provided token")) {
-        console.log("[client debug]", msg);
+    client.on("shardReady", (shardId, unavailableGuilds) => {
+      console.log(`[shardReady] shard=${shardId} unavailableGuilds=${unavailableGuilds?.size ?? 0}`);
+    });
+
+    client.on("shardConnecting", (shardId) => {
+      console.log(`[shardConnecting] shard=${shardId}`);
+    });
+
+    client.on("debug", (msg) => {
+      const s = String(msg || "");
+      const lower = s.toLowerCase();
+
+      if (lower.includes("provided token")) return;
+
+      if (
+        lower.includes("gateway") ||
+        lower.includes("session") ||
+        lower.includes("heartbeat") ||
+        lower.includes("identify") ||
+        lower.includes("resume") ||
+        lower.includes("shard") ||
+        lower.includes("ready") ||
+        lower.includes("429")
+      ) {
+        console.log("[client debug]", s);
+      }
+
+      const isGateway429 = lower.includes("gateway") && lower.includes("429");
+      if (isGateway429) {
+        sawGateway429 = true;
+        const parsed = parseResetMs(s);
+        if (parsed != null && parsed >= 60_000) {
+          saw429ResetMs = parsed;
+        }
+      }
+    });
+
+    client.once("ready", async () => {
+      try {
+        console.log(`[ready] Logged in as ${client.user.tag}`);
+        client.user.setActivity("feds.lol", {
+          type: ActivityType.Streaming,
+          url: "https://www.feds.lol/register"
+        });
+        console.log("[ready] Activity set");
+      } catch (err) {
+        console.error("[ready] Failed to set activity:", err?.stack || err);
+      }
+
+      await finishOk();
+    });
+
+    try {
+      console.log("[boot] About to call client.login()");
+      await client.login(TOKEN);
+      loginResolved = true;
+      clearTimeout(loginTimer);
+      console.log("[boot] client.login() resolved successfully");
+    } catch (err) {
+      if (!loginResolved) {
+        await finishErr(err);
       }
     }
   });
+}
 
-  client.on("interactionCreate", (interaction) => {
-    console.log(
-      `[interaction] type=${interaction.type} id=${interaction.customId ?? interaction.commandName ?? "unknown"}`
-    );
-  });
+async function boot() {
+  await loadDatabase();
 
-  client.once("ready", () => {
-    readyFired = true;
-    console.log(`[ready] Logged in as ${client.user.tag}`);
-
-    try {
-      client.user.setActivity("feds.lol", {
-        type: ActivityType.Streaming,
-        url: "https://www.feds.lol/register"
-      });
-      console.log("[ready] Activity set");
-    } catch (err) {
-      console.error("[ready] Failed to set activity:", err?.stack || err);
-    }
-  });
+  const backoff = createBackoffManager();
 
   setInterval(() => {
-    console.log("[heartbeat] process alive", new Date().toISOString());
+    console.log("[heartbeat] process alive", {
+      at: new Date().toISOString(),
+      nextConnectAt: backoff.nextConnectAt ? new Date(backoff.nextConnectAt).toISOString() : null,
+      waitRemainingMs: backoff.getRemainingMs()
+    });
   }, 15000);
 
-  setTimeout(() => {
-    if (!readyFired) {
-      console.error("[watchdog] ready event did not fire within 45s");
+  while (true) {
+    const remaining = backoff.getRemainingMs();
+    if (remaining > 0) {
+      console.log(`[boot] waiting ${remaining}ms before next connect attempt`);
+      await sleep(remaining);
     }
-  }, 45000);
 
-  await loadDatabase();
-  loadCommands(client);
-  loadEvents(client);
+    console.log("[boot] Creating Discord client");
+    const client = createClient();
 
-  console.log("[boot] About to call client.login()");
+    try {
+      loadCommands(client);
+      loadEvents(client);
 
-  try {
-    await loginWithTimeout(client, TOKEN, 30000);
-    console.log("[boot] client.login() resolved successfully");
-  } catch (err) {
-    console.error("[boot] Failed to login full error:", err?.stack || err);
-    process.exit(1);
+      const result = await waitForReady(client, 30_000, 45_000);
+
+      backoff.reset();
+      console.log("[boot] Client is fully ready");
+      return;
+    } catch (err) {
+      console.error("[boot] Login attempt failed:", err?.stack || err);
+
+      let waitMs;
+
+      const msg = String(err?.message || err || "").toLowerCase();
+
+      if (msg.includes("429") || msg.includes("1015")) {
+        waitMs = backoff.schedule(30 * 60_000, "explicit 429/1015 failure");
+      } else {
+        waitMs = backoff.scheduleExponential("generic login/ready failure");
+      }
+
+      try {
+        if (client.isReady()) {
+          await client.destroy();
+        } else {
+          client.destroy();
+        }
+      } catch (destroyErr) {
+        console.error("[boot] Failed to destroy client cleanly:", destroyErr?.stack || destroyErr);
+      }
+
+      await sleep(waitMs);
+    }
   }
 }
 
-main().catch((err) => {
-  console.error("[fatal] main() failed:", err?.stack || err);
+boot().catch((err) => {
+  console.error("[fatal] boot failed:", err?.stack || err);
   process.exit(1);
 });
