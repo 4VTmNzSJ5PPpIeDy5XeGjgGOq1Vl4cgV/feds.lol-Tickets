@@ -1,5 +1,7 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
@@ -12,6 +14,9 @@ import {
 const PANEL_IMAGE_URL =
   "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png?ex=69b05015&is=69aefe95&hm=f45315fbba3cf03f400f245d90371201959632c3a56234d2c651415c62b11ab7&";
 
+const BOT_AVATAR_URL =
+  "https://cdn.discordapp.com/avatars/1480650405493870803/b15a8d04476864410492ae9325c40d1e.png";
+
 const command = {
   data: new SlashCommandBuilder()
     .setName("panel")
@@ -22,14 +27,30 @@ const command = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const embed = new EmbedBuilder()
+      .setAuthor({
+        name: "feds.lol Support",
+        iconURL: "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png"
+      })
       .setTitle("Assistance and Support")
       .setDescription(
         "Please create a ticket using the menu below if you require any help. " +
           "Tickets are private and designed to aid you — without the hassle of relying on direct messages."
       )
+      .addFields({
+        name: "Provided support",
+        value:
+          "**1. General Support** — Get help with anything feds.lol related, content creation, or general inquiries.\n" +
+          "**2. Report User** — Report a user for breaking server rules or abusive behaviour.\n" +
+          "**3. Account Recovery** — Recover access to your account.\n" +
+          "**4. Purchase / Billing** — Help with purchases, payments, or billing issues.\n" +
+          "**5. Badge Application** — Apply for a verified badge.",
+        inline: false
+      })
       .setColor(0x4240ae)
+      .setThumbnail(BOT_AVATAR_URL)
+      .setImage(PANEL_IMAGE_URL)
       .setFooter({ text: "feds.lol Support • support@feds.lol" })
-      .setImage(PANEL_IMAGE_URL);
+      .setTimestamp();
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId("ticket_open")
@@ -62,7 +83,18 @@ const command = {
           .setEmoji({ id: "1478268606620897391", name: "verified_application" })
       );
 
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+    const linkRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setLabel("feds.lol")
+        .setStyle(ButtonStyle.Link)
+        .setURL("https://feds.lol"),
+      new ButtonBuilder()
+        .setLabel("Support")
+        .setStyle(ButtonStyle.Link)
+        .setURL("https://feds.lol")
+    );
+
+    const menuRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
     if (!interaction.channel || !interaction.channel.isTextBased()) {
       await interaction.editReply({
@@ -73,7 +105,7 @@ const command = {
 
     await (interaction.channel as any).send({
       embeds: [embed],
-      components: [row]
+      components: [linkRow, menuRow]
     });
 
     await interaction.editReply({ content: "Panel sent!" });

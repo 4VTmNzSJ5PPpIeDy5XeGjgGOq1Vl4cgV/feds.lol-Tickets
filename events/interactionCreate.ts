@@ -27,6 +27,10 @@ function buildOpenTicketEmbed(
 ): EmbedBuilder {
   const guidance = (meta as { guidance?: string }).guidance ?? "";
   return new EmbedBuilder()
+    .setAuthor({
+      name: "feds.lol Support",
+      iconURL: "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png"
+    })
     .setTitle(`${meta.emoji} ${meta.label}`)
     .setDescription(
       `Welcome <@${ticket.user_id}>, thanks for reaching out.\n\n` +
@@ -35,10 +39,10 @@ function buildOpenTicketEmbed(
         (guidance ? `${guidance}` : "")
     )
     .addFields(
-      { name: "Ticket ID", value: `#${ticket.id}`, inline: true },
+      { name: "Ticket ID", value: `\`#${ticket.id}\``, inline: true },
       { name: "Category", value: meta.label, inline: true },
       {
-        name: "Brief Description",
+        name: "Brief description",
         value: ticket.brief_description ?? "",
         inline: false
       },
@@ -462,6 +466,10 @@ const event = {
 
       const guidance = (meta as { guidance?: string }).guidance ?? "";
       const openEmbed = new EmbedBuilder()
+        .setAuthor({
+          name: "feds.lol Support",
+          iconURL: "https://cdn.discordapp.com/attachments/1478684765040414802/1480613291670765579/image.png"
+        })
         .setTitle(`${meta.emoji} ${meta.label}`)
         .setDescription(
           `Welcome ${user}, thanks for reaching out.\n\n` +
@@ -470,9 +478,9 @@ const event = {
             (guidance ? `${guidance}` : "")
         )
         .addFields(
-          { name: "Ticket ID", value: `#${ticketRecord.id}`, inline: true },
+          { name: "Ticket ID", value: `\`#${ticketRecord.id}\``, inline: true },
           { name: "Category", value: meta.label, inline: true },
-          { name: "Brief Description", value: briefDescription, inline: false },
+          { name: "Brief description", value: briefDescription, inline: false },
           { name: "Feds URL", value: fedsUrl, inline: false }
         )
         .setColor(meta.color)
