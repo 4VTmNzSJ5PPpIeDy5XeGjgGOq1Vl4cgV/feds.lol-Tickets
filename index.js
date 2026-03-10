@@ -531,6 +531,7 @@ function shouldLogRequest(req, pathname) {
     "/status",
     "/logs",
     "/status.json",
+    "/transcripts",
     "/logs.json"
   ]);
 
