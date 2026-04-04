@@ -1323,4 +1323,3 @@ startBot().catch(async (err) => {
 
   process.exit(1);
 });
-
