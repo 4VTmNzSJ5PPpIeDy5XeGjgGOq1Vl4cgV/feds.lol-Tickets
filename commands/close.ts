@@ -2,9 +2,11 @@ import {
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  type Client
 } from "discord.js";
 import * as db from "../database";
+import { scheduleTicketChannelDeletion } from "../lib/deleteTicketChannel";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -33,6 +35,8 @@ async function fetchAllMessages(
     if (batch.size < batchSize) break;
 
     lastId = batchArray[batchArray.length - 1].id;
+    // Light pacing to reduce message-history rate limits on large tickets
+    await new Promise((r) => setTimeout(r, 120));
   }
 
   return all
@@ -46,7 +50,7 @@ const command = {
     .setDescription("Close the current ticket."),
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async execute(interaction: any) {
+  async execute(interaction: any, client: Client) {
     const { channel, guild, member, user } = interaction;
     if (!channel || !guild || !member) return;
     if (!channel.isTextBased() || channel.isDMBased()) return;
@@ -166,11 +170,7 @@ const command = {
       console.error("Ticket DB close failed:", e);
     }
 
-    setTimeout(() => {
-      channel.delete().catch((e: unknown) =>
-        console.error("Delete failed:", e)
-      );
-    }, 5000);
+    scheduleTicketChannelDeletion(client, guild.id, channel.id, "/close");
   }
 };
 

@@ -17,6 +17,7 @@ import {
   type TextChannel
 } from "discord.js";
 import * as db from "../database";
+import { scheduleTicketChannelDeletion } from "../lib/deleteTicketChannel";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -176,6 +177,7 @@ function buildChannelName(briefDescription: string, fedsUrl: string): string {
 }
 
 async function closeTicket(
+  client: Client,
   channel: TextChannel,
   guild: Guild,
   user: { tag: string; id: string },
@@ -193,10 +195,7 @@ async function closeTicket(
     console.error("DB close failed:", e);
   });
 
-  setTimeout(
-    () => channel.delete().catch((e) => console.error("Delete failed:", e)),
-    5000
-  );
+  scheduleTicketChannelDeletion(client, guild.id, channel.id, "button-close");
 }
 
 const event = {
@@ -722,6 +721,7 @@ const event = {
           if (allMessages.length >= 5000) break;
 
           lastId = batchArray[batchArray.length - 1].id;
+          await new Promise((r) => setTimeout(r, 120));
         }
 
         const content = allMessages
@@ -811,16 +811,25 @@ const event = {
       interaction.customId.startsWith("ticket_confirm_close_")
     ) {
       const button = interaction as ButtonInteraction;
-      await button.deferUpdate();
-
       const { channel, guild, user } = button;
       if (!channel || !guild || !channel.isTextBased() || channel.isDMBased())
         return;
 
       const dbTicket = await db.getTicketByChannel(channel.id);
-      const ticketOwnerId =
-        dbTicket?.user_id ||
-        button.customId.replace("ticket_confirm_close_", "");
+      if (!dbTicket) {
+        return button.reply({
+          content: "No ticket record found for this channel.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+      if (dbTicket.status !== "open") {
+        return button.reply({
+          content: "This ticket is already closed.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      await button.deferUpdate();
 
       const closeEmbed = new EmbedBuilder()
         .setTitle("Ticket Closed")
@@ -830,12 +839,22 @@ const event = {
         .setColor(0x4240ae)
         .setTimestamp();
 
-      await channel.send({ embeds: [closeEmbed] });
+      try {
+        await channel.send({ embeds: [closeEmbed] });
+      } catch (e) {
+        console.error("[ticket] Could not send close embed:", e);
+      }
 
       claimedTickets.delete(channel.id);
       escalatedTickets.delete(channel.id);
 
-      await closeTicket(channel as TextChannel, guild, user, ticketOwnerId);
+      await closeTicket(
+        client,
+        channel as TextChannel,
+        guild,
+        user,
+        dbTicket.user_id
+      );
       return;
     }
 

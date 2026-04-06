@@ -186,6 +186,28 @@ export async function closeTicketByChannel(channelId: string): Promise<TicketRow
   return result.rows[0] ?? null;
 }
 
+/** Recently closed tickets — used on boot to delete channels if a prior run crashed before the timer fired. */
+export async function listClosedTicketsChannelsForCleanup(
+  maxAgeHours = 48,
+  limit = 60
+): Promise<{ guild_id: string; channel_id: string }[]> {
+  const safeHours = Math.max(1, Math.min(Number(maxAgeHours) || 48, 168));
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 60, 200));
+
+  const result = await pool.query<{ guild_id: string; channel_id: string }>(
+    `SELECT guild_id, channel_id
+     FROM tickets
+     WHERE status = 'closed'
+       AND closed_at IS NOT NULL
+       AND closed_at > NOW() - ($1::int * INTERVAL '1 hour')
+     ORDER BY closed_at DESC
+     LIMIT $2`,
+    [safeHours, safeLimit]
+  );
+
+  return result.rows;
+}
+
 export async function listTranscripts(limit = 100): Promise<TranscriptRow[]> {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
 

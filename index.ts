@@ -17,6 +17,7 @@ import {
 
 import * as db from "./database";
 import { getRecipientIds } from "./lib/dmRecipients";
+import { reconcileStaleTicketChannels } from "./lib/reconcileTicketChannels";
 
 type LogLevel = "log" | "warn" | "error";
 
@@ -1118,6 +1119,8 @@ async function startBot(): Promise<void> {
     console.log("[ready] Presence set");
 
     await clearAllBotDMs(client);
+
+    await reconcileStaleTicketChannels(client);
 
     await sendAdminDm(
       client,

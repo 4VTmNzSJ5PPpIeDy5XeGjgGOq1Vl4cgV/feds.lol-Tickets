@@ -1,4 +1,4 @@
-import type { Client, Message } from "discord.js";
+import { PermissionFlagsBits, type Client, type Message } from "discord.js";
 import * as db from "../database";
 import { addRecipient } from "../lib/dmRecipients";
 
@@ -30,7 +30,7 @@ const event = {
 
       const isStaff =
         isSupportMessage(message) ||
-        message.member?.permissions?.has("ManageChannels");
+        message.member?.permissions?.has(PermissionFlagsBits.ManageChannels);
 
       if (!isStaff) return;
 
@@ -52,12 +52,20 @@ const event = {
       const channelName =
         (message.channel as any).name ?? (message.channelId ?? "DM");
 
-      await ticketOwner
-        .send(
-          `You have a new staff reply in **${message.guild.name}** ticket **#${channelName}**.\n\n` +
+      try {
+        await ticketOwner.send(
+          `You have a new staff reply in **${message.guild!.name}** ticket **#${channelName}**.\n\n` +
             `**${message.author.tag}:** ${preview}`
-        )
-        .catch(() => {});
+        );
+      } catch (e) {
+        console.warn(
+          "[messageCreate] Staff reply DM failed:",
+          ticket.user_id,
+          (e as Error)?.message || e
+        );
+        dmCooldowns.set(cooldownKey, now);
+        return;
+      }
 
       addRecipient(ticket.user_id);
 
