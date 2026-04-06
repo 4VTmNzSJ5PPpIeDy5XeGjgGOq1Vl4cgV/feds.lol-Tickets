@@ -11,6 +11,7 @@ import {
   Collection,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   Partials,
   type Collection as DiscordCollection
 } from "discord.js";
@@ -91,14 +92,6 @@ console.error = (...args: unknown[]) => {
 };
 
 console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-GATEWAY-DEBUG-NOTIFY-COOLDOWN");
-
-process.on("uncaughtException", (err) => {
-  console.error("[fatal] uncaughtException:", (err as Error)?.stack || err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("[fatal] unhandledRejection:", (err as Error)?.stack || err);
-});
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -257,6 +250,90 @@ async function sendAdminDm(
     );
   }
 }
+
+/** Set in `ClientReady` so process-level handlers and REST hooks can notify admin */
+let discordClientRef: Client | null = null;
+
+function formatThrown(reason: unknown): string {
+  if (reason instanceof Error) return reason.stack || reason.message;
+  return String(reason);
+}
+
+function tryNotifyInteractionError(eventName: string, _err: unknown, args: unknown[]): void {
+  const first = args[0];
+  if (
+    !first ||
+    typeof first !== "object" ||
+    !("isRepliable" in first) ||
+    typeof (first as { isRepliable?: () => boolean }).isRepliable !== "function" ||
+    !(first as { isRepliable: () => boolean }).isRepliable()
+  ) {
+    return;
+  }
+
+  const interaction = first as unknown as {
+    replied?: boolean;
+    deferred?: boolean;
+    reply: (o: unknown) => Promise<unknown>;
+    followUp: (o: unknown) => Promise<unknown>;
+  };
+
+  void (async () => {
+    try {
+      const payload = {
+        content: "Something went wrong processing that action.",
+        flags: MessageFlags.Ephemeral
+      };
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp(payload);
+      } else {
+        await interaction.reply(payload);
+      }
+    } catch (replyErr) {
+      console.error(
+        `[events/${eventName}] Could not send error reply to user:`,
+        (replyErr as Error)?.message || replyErr
+      );
+    }
+  })();
+}
+
+process.on("unhandledRejection", (reason) => {
+  const text = formatThrown(reason);
+  console.error("[process] unhandledRejection:", text);
+  void (async () => {
+    const c = discordClientRef;
+    if (!c) return;
+    await sendAdminDm(
+      c,
+      "⚠️ Unhandled promise rejection",
+      [text.length > 1700 ? `${text.slice(0, 1700)}…` : text],
+      { cooldownKey: "unhandled_rejection" }
+    );
+  })();
+});
+
+process.on("uncaughtException", (err) => {
+  const text = formatThrown(err);
+  console.error("[process] uncaughtException:", text);
+  void (async () => {
+    const c = discordClientRef;
+    if (c) {
+      await sendAdminDm(
+        c,
+        "💀 Uncaught exception — process exiting (host should restart)",
+        [text.length > 1700 ? `${text.slice(0, 1700)}…` : text],
+        { cooldownKey: "uncaught_exception", bypassCooldown: true }
+      );
+    }
+    setTimeout(() => process.exit(1), 1000);
+  })();
+});
+
+process.on("warning", (w) => {
+  console.warn("[process] NodeWarning:", w.name, w.message);
+  if (w.stack) console.warn(w.stack);
+});
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -940,7 +1017,17 @@ const server = http.createServer(async (req, res) => {
       console.log(`[web] finished in ${Date.now() - started}ms`);
     }
   } catch (err) {
-    console.error("[web] route error:", (err as Error)?.stack || err);
+    const detail = formatThrown(err);
+    console.error("[web] route error:", detail);
+    const c = discordClientRef;
+    if (c) {
+      void sendAdminDm(
+        c,
+        "⚠️ Web route returned 500",
+        [detail.length > 1700 ? `${detail.slice(0, 1700)}…` : detail],
+        { cooldownKey: "web_route_500" }
+      );
+    }
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end("Server error");
   }
@@ -1039,10 +1126,27 @@ function loadEvents(client: Client & { commands: CommandCollection }): void {
       continue;
     }
 
+    const run = (...args: unknown[]) => {
+      Promise.resolve(event.execute(...args, client)).catch((err) => {
+        const detail = formatThrown(err);
+        console.error(`[events/${event.name}]`, detail);
+        tryNotifyInteractionError(event.name, err, args);
+        const c = discordClientRef;
+        if (c) {
+          void sendAdminDm(
+            c,
+            `⚠️ Event handler error: ${event.name}`,
+            [detail.length > 1700 ? `${detail.slice(0, 1700)}…` : detail],
+            { cooldownKey: `event_err_${event.name}` }
+          );
+        }
+      });
+    };
+
     if (event.once) {
-      client.once(event.name, (...args) => event.execute(...args, client));
+      client.once(event.name, run);
     } else {
-      client.on(event.name, (...args) => event.execute(...args, client));
+      client.on(event.name, run);
     }
 
     console.log(`[events] registered ${event.name}`);
@@ -1097,6 +1201,8 @@ async function startBot(): Promise<void> {
   client.commands = new Collection<string, CommandModule>() as unknown as CommandCollection;
 
   client.once(Events.ClientReady, async () => {
+    discordClientRef = client;
+
     updateStatus({
       state: "ready",
       lastReady: isoNow()
@@ -1242,6 +1348,20 @@ async function startBot(): Promise<void> {
 
       console.log("[client debug]", msg);
     }
+  });
+
+  client.rest.on("rateLimited", (info) => {
+    console.warn(
+      "[rest] rateLimited",
+      "route=",
+      (info as { route?: string }).route,
+      "limit=",
+      (info as { limit?: number }).limit,
+      "method=",
+      (info as { method?: string }).method,
+      "global=",
+      (info as { global?: boolean }).global
+    );
   });
 
   loadCommands(client);
