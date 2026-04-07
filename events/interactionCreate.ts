@@ -124,7 +124,9 @@ async function sendLog(
 
   if (category) embed.addFields({ name: "Category", value: category, inline: true });
 
-  logChannel.send({ embeds: [embed] }).catch(() => {});
+  logChannel.send({ embeds: [embed] }).catch((e) => {
+    console.error("[tickets] logChannel.send failed:", e);
+  });
 }
 
 function isSupportMember(interaction: Interaction): boolean {
@@ -133,6 +135,34 @@ function isSupportMember(interaction: Interaction): boolean {
   if (!member || !("roles" in member)) return false;
   const roles = (member.roles as { cache: Map<string, unknown> }).cache;
   return SUPPORT_ROLE_IDS.some((id) => roles.has(id));
+}
+
+function describeInteraction(i: Interaction): string {
+  const base = [
+    `type=${i.type}`,
+    `user=${(i as any).user?.id ?? "?"}`,
+    `guild=${(i as any).guild?.id ?? "?"}`,
+    `channel=${(i as any).channelId ?? "?"}`
+  ];
+
+  if (i.isButton()) base.push(`customId=${i.customId}`);
+  if (i.isAnySelectMenu()) base.push(`customId=${i.customId}`);
+  if (i.isModalSubmit()) base.push(`customId=${i.customId}`);
+  if (i.isChatInputCommand()) base.push(`command=${i.commandName}`);
+
+  return base.join(" ");
+}
+
+function startAckWatchdog(i: Interaction): void {
+  if (!("isRepliable" in i) || typeof (i as any).isRepliable !== "function") return;
+  if (!(i as any).isRepliable()) return;
+
+  const repliable = i as unknown as { replied?: boolean; deferred?: boolean };
+  setTimeout(() => {
+    if (!repliable.replied && !repliable.deferred) {
+      console.warn("[interaction] NOT ACKED IN TIME:", describeInteraction(i));
+    }
+  }, 2500);
 }
 
 function normaliseFedsUrl(input: string): string {
@@ -202,6 +232,8 @@ const event = {
   name: "interactionCreate",
 
   async execute(interaction: Interaction, client: Client & { commands?: any }) {
+    startAckWatchdog(interaction);
+
     // Slash commands
     if (interaction.isChatInputCommand()) {
       const command = client.commands?.get(interaction.commandName);
@@ -219,9 +251,13 @@ const event = {
           flags: MessageFlags.Ephemeral
         } as const;
         if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(payload as any).catch(() => {});
+          await interaction.followUp(payload as any).catch((e) => {
+            console.error("[interaction] followUp failed:", e);
+          });
         } else {
-          await interaction.reply(payload as any).catch(() => {});
+          await interaction.reply(payload as any).catch((e) => {
+            console.error("[interaction] reply failed:", e);
+          });
         }
       }
       return;
@@ -546,7 +582,9 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        await msg.edit({ components: [updatedRow] }).catch(() => {});
+        await msg.edit({ components: [updatedRow] }).catch((e) => {
+          console.error("[tickets] claim msg.edit failed:", e);
+        });
       }
 
       return button.editReply({ content: `Ticket claimed by ${user}.` });
@@ -619,7 +657,9 @@ const event = {
             btn.setDisabled(true);
           }
         });
-        await msg.edit({ components: [updatedRow] }).catch(() => {});
+        await msg.edit({ components: [updatedRow] }).catch((e) => {
+          console.error("[tickets] escalate msg.edit failed:", e);
+        });
       }
 
       return button.editReply({
@@ -798,7 +838,9 @@ const event = {
               });
             }
 
-            await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
+            await logChannel.send({ embeds: [logEmbed] }).catch((e) => {
+              console.error("[tickets] transcript logChannel.send failed:", e);
+            });
           }
         }
 
@@ -831,7 +873,9 @@ const event = {
             content: "No ticket record found for this channel.",
             flags: MessageFlags.Ephemeral
           })
-          .catch(() => {});
+          .catch((e) => {
+            console.error("[tickets] confirm close followUp failed:", e);
+          });
       }
       if (dbTicket.status !== "open") {
         return button
@@ -839,7 +883,9 @@ const event = {
             content: "This ticket is already closed.",
             flags: MessageFlags.Ephemeral
           })
-          .catch(() => {});
+          .catch((e) => {
+            console.error("[tickets] confirm close followUp failed:", e);
+          });
       }
 
       const closeEmbed = new EmbedBuilder()
