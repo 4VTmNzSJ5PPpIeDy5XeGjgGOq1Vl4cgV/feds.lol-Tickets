@@ -69,7 +69,6 @@ Copy `.env.example` to `.env` and fill in values. Never commit `.env` (it is in 
 | `GIST_BACKUP_ENABLED` | Enable 12-hour logical DB backups to a GitHub Gist (`true/1/yes`) |
 | `GITHUB_GIST_ID` | Target gist ID to update with `backup.json` |
 | `GITHUB_GIST_TOKEN` | GitHub token that can edit the gist |
-| `BACKUP_RUN_KEY` | Secret key to manually trigger backup via `/backup/run?key=...` |
 | `PORT` | HTTP server port (default 3000) |
 | `NODE_ENV` | e.g. `production` |
 
@@ -86,7 +85,6 @@ Copy `.env.example` to `.env` and fill in values. Never commit `.env` (it is in 
 | `/logs.json` | JSON logs |
 | `/transcripts?key=YOUR_KEY` | Transcript list (requires `TRANSCRIPT_VIEW_KEY`) |
 | `/transcripts/:id?key=YOUR_KEY` | Single transcript |
-| `/backup/run?key=YOUR_KEY` | Manually trigger gist backup (requires `BACKUP_RUN_KEY`) |
 
 ---
 
