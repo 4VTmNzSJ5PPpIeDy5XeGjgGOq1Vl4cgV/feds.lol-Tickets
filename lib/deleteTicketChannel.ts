@@ -3,6 +3,7 @@ import type { Client, Guild } from "discord.js";
 const DEFAULT_DELAY_MS = 5000;
 const MAX_DELETE_ATTEMPTS = 5;
 const RETRY_BASE_MS = 2000;
+const LOG_ON_FAILURE = true;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -83,6 +84,22 @@ export function scheduleTicketChannelDeletion(
           console.error(
             `[ticket-delete] ${context}: giving up on ${channelId} — check bot Manage Channels / hierarchy`
           );
+          if (LOG_ON_FAILURE) {
+            const logId = process.env.LOG_CHANNEL_ID?.trim();
+            if (logId) {
+              const logChannel =
+                guild.channels.cache.get(logId) ??
+                (await guild.channels.fetch(logId).catch(() => null));
+              if (logChannel?.isTextBased()) {
+                await logChannel
+                  .send(
+                    `⚠️ Failed to delete ticket channel <#${channelId}> after close (context: \`${context}\`). ` +
+                      `This is almost always a permissions/hierarchy issue: bot needs **Manage Channels** and role above the channel.`
+                  )
+                  .catch(() => {});
+              }
+            }
+          }
         }
       } catch (e) {
         console.error(`[ticket-delete] ${context}: unexpected error`, e);

@@ -517,6 +517,9 @@ const event = {
         });
       }
 
+      // Acknowledge quickly to avoid "Interaction failed" on slow API.
+      await button.deferReply({ flags: MessageFlags.Ephemeral });
+
       claimedTickets.set(channel.id, user.tag);
 
       const msg = await channel.messages
@@ -546,7 +549,7 @@ const event = {
         await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
-      return button.reply({ content: `Ticket claimed by ${user}.` });
+      return button.editReply({ content: `Ticket claimed by ${user}.` });
     }
 
     // Escalate ticket
@@ -585,6 +588,9 @@ const event = {
         });
       }
 
+      // Acknowledge quickly to avoid "Interaction failed" on slow API.
+      await button.deferReply({ flags: MessageFlags.Ephemeral });
+
       escalatedTickets.add(channel.id);
 
       const msg = await channel.messages
@@ -616,7 +622,7 @@ const event = {
         await msg.edit({ components: [updatedRow] }).catch(() => {});
       }
 
-      return button.reply({
+      return button.editReply({
         content: `Ticket escalated by ${user}. <@&${escalateRoleId}>`
       });
     }
