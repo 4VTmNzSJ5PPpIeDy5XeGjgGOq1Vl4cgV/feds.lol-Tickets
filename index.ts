@@ -130,6 +130,10 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 // NOTE: Admin DM notifications and DM cleanup are intentionally removed to reduce REST traffic/rate-limits.
 // Errors still surface via logs and the /logs + /status endpoints.
 
@@ -1104,6 +1108,21 @@ async function startBot(): Promise<void> {
     console.error("[client error]", err);
   });
 
+  // Surface shard-level errors (useful when gateway never reaches READY).
+  client.on("shardError", (err) => {
+    updateStatus({
+      lastError: { time: isoNow(), error: (err as Error)?.stack || String(err) }
+    });
+    console.error("[gateway] shardError", (err as Error)?.stack || err);
+  });
+
+  client.on("invalidated", () => {
+    updateStatus({
+      lastWarn: { time: isoNow(), warn: "Session invalidated" }
+    });
+    console.warn("[gateway] session invalidated");
+  });
+
   client.on("warn", (msg) => {
     updateStatus({
       lastWarn: {
@@ -1166,21 +1185,51 @@ async function startBot(): Promise<void> {
     lastLoginAttempt: isoNow()
   });
 
-  setTimeout(async () => {
-    if (botStatus.state === "logging_in" && !botStatus.lastReady) {
+  // If gateway login stalls, force a clean reconnect. This avoids “stuck” instances on host restarts.
+  const LOGIN_STALL_MS = 120000;
+  const MAX_LOGIN_RETRIES = 3;
+
+  let loginRetries = 0;
+  let stallTimer: NodeJS.Timeout | null = null;
+
+  const armStallTimer = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(async () => {
+      if (botStatus.state === "ready" || botStatus.lastReady) return;
+
       updateStatus({
         state: "login_stalled",
         lastWarn: {
           time: isoNow(),
-          warn: "Login has not reached ready after 90 seconds"
+          warn: `Login has not reached ready after ${Math.round(LOGIN_STALL_MS / 1000)} seconds`
         }
       });
+      console.warn("[boot] Login has not reached ready in time; restarting gateway session");
 
-      console.warn(
-        "[boot] Login has not reached ready after 90 seconds"
-      );
-    }
-  }, 90000);
+      loginRetries++;
+      if (loginRetries > MAX_LOGIN_RETRIES) {
+        console.error("[boot] Max login retries exceeded; exiting for host restart");
+        process.exit(1);
+      }
+
+      try {
+        await client.destroy();
+      } catch (e) {
+        console.warn("[boot] client.destroy failed:", (e as Error)?.message || e);
+      }
+
+      await sleep(2000 * loginRetries);
+      updateStatus({ state: "logging_in", lastLoginAttempt: isoNow() });
+      armStallTimer();
+      await client.login(TOKEN);
+    }, LOGIN_STALL_MS);
+  };
+
+  armStallTimer();
+
+  client.once(Events.ClientReady, () => {
+    if (stallTimer) clearTimeout(stallTimer);
+  });
 
   console.log("[boot] Logging into Discord...");
 
