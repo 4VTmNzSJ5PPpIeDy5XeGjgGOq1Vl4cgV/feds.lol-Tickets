@@ -821,21 +821,26 @@ const event = {
       if (!channel || !guild || !channel.isTextBased() || channel.isDMBased())
         return;
 
-      const dbTicket = await db.getTicketByChannel(channel.id);
+      // Always acknowledge first (DB calls can exceed Discord's 3s interaction window)
+      await button.deferUpdate();
+
+      const dbTicket = await db.getTicketByChannel(channel.id).catch(() => null);
       if (!dbTicket) {
-        return button.reply({
-          content: "No ticket record found for this channel.",
-          flags: MessageFlags.Ephemeral
-        });
+        return button
+          .followUp({
+            content: "No ticket record found for this channel.",
+            flags: MessageFlags.Ephemeral
+          })
+          .catch(() => {});
       }
       if (dbTicket.status !== "open") {
-        return button.reply({
-          content: "This ticket is already closed.",
-          flags: MessageFlags.Ephemeral
-        });
+        return button
+          .followUp({
+            content: "This ticket is already closed.",
+            flags: MessageFlags.Ephemeral
+          })
+          .catch(() => {});
       }
-
-      await button.deferUpdate();
 
       const closeEmbed = new EmbedBuilder()
         .setTitle("Ticket Closed")

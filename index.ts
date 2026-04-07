@@ -1228,6 +1228,30 @@ async function startBot(): Promise<void> {
 
     await reconcileStaleTicketChannels(client);
 
+    // Quick permission sanity check (common root cause of "can't delete channels").
+    try {
+      const me = await client.user?.fetch();
+      if (me) {
+        for (const [guildId] of client.guilds.cache) {
+          const guild = client.guilds.cache.get(guildId);
+          if (!guild) continue;
+          const member = await guild.members.fetch(me.id).catch(() => null);
+          if (!member) continue;
+          const perms = member.permissions;
+          const missing: string[] = [];
+          if (!perms.has("ManageChannels")) missing.push("ManageChannels");
+          if (!perms.has("ViewChannel")) missing.push("ViewChannel");
+          if (missing.length) {
+            console.warn(
+              `[ready] Missing guild-level permissions in ${guild.name} (${guild.id}): ${missing.join(", ")}`
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[ready] Permission self-check failed:", (e as Error)?.message || e);
+    }
+
     await sendAdminDm(
       client,
       "🟢 Feds Agent Online",
