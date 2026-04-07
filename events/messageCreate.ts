@@ -5,6 +5,9 @@ const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
   : [];
 
+const OWNER_USER_ID = "261265820678619137";
+const OWNER_PREFIX = "!agent";
+
 const dmCooldowns = new Map<string, number>();
 const DM_COOLDOWN_MS = 60 * 1000;
 
@@ -14,13 +17,52 @@ function isSupportMessage(message: Message): boolean {
   );
 }
 
+async function handleOwnerPrefixCommand(message: Message, client: Client): Promise<boolean> {
+  if (message.author.id !== OWNER_USER_ID) return false;
+
+  const content = (message.content || "").trim();
+  if (!content.toLowerCase().startsWith(OWNER_PREFIX)) return false;
+
+  const args = content.slice(OWNER_PREFIX.length).trim().split(/\s+/).filter(Boolean);
+  const sub = (args[0] || "").toLowerCase();
+
+  if (!sub || sub === "help") {
+    await message.reply(
+      `Owner commands:\n` +
+        `- \`${OWNER_PREFIX} ping\`\n` +
+        `- \`${OWNER_PREFIX} restart\``
+    );
+    return true;
+  }
+
+  if (sub === "ping") {
+    const tag = client.user?.tag || "unknown";
+    await message.reply(`pong (bot=${tag})`);
+    return true;
+  }
+
+  if (sub === "restart") {
+    await message.reply("Restarting now (Render should bring me back up)...").catch(() => {});
+    setTimeout(() => process.exit(0), 750);
+    return true;
+  }
+
+  await message.reply(`Unknown subcommand: \`${sub}\`. Try \`${OWNER_PREFIX} help\`.`);
+  return true;
+}
+
 const event = {
   name: "messageCreate",
 
   async execute(message: Message, client: Client) {
     try {
-      if (!message.guild) return;
       if (message.author.bot) return;
+
+      // Owner-only prefix commands (no env, no slash commands).
+      if (await handleOwnerPrefixCommand(message, client)) return;
+
+      // Remaining logic is ticket-only and guild-only.
+      if (!message.guild) return;
 
       const ticket = await db.getTicketByChannel(message.channel.id);
       if (!ticket || ticket.status !== "open") return;
