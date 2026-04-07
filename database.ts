@@ -233,3 +233,23 @@ export async function getTranscriptById(id: number): Promise<TranscriptRow | nul
 
   return result.rows[0] || null;
 }
+
+/** Full logical export used by gist backups (JSON). */
+export async function exportTicketsForBackup(): Promise<TicketRow[]> {
+  const result = await pool.query<TicketRow>(
+    `SELECT *
+     FROM tickets
+     ORDER BY id ASC`
+  );
+  return result.rows;
+}
+
+/** Full logical export used by gist backups (JSON). */
+export async function exportTranscriptsForBackup(): Promise<TranscriptRow[]> {
+  const result = await pool.query<TranscriptRow>(
+    `SELECT *
+     FROM transcripts
+     ORDER BY id ASC`
+  );
+  return result.rows;
+}

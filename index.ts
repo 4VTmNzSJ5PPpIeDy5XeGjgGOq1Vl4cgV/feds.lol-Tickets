@@ -19,6 +19,7 @@ import {
 import * as db from "./database";
 import { getRecipientIds } from "./lib/dmRecipients";
 import { reconcileStaleTicketChannels } from "./lib/reconcileTicketChannels";
+import { runGistBackupOnce, startGistBackupScheduler } from "./lib/gistBackup";
 
 type LogLevel = "log" | "warn" | "error";
 
@@ -825,6 +826,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === "/backup/run") {
+      const expected = process.env.BACKUP_RUN_KEY?.trim();
+      const got = urlObj.searchParams.get("key") || "";
+      if (!expected || got !== expected) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+
+      const r = await runGistBackupOnce();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ...r, now: isoNow() }, null, 2));
+      return;
+    }
+
     if (pathname === "/status") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderStatusPage());
@@ -1227,6 +1243,8 @@ async function startBot(): Promise<void> {
     await clearAllBotDMs(client);
 
     await reconcileStaleTicketChannels(client);
+
+    startGistBackupScheduler();
 
     // Quick permission sanity check (common root cause of "can't delete channels").
     try {
