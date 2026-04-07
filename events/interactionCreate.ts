@@ -153,16 +153,44 @@ function describeInteraction(i: Interaction): string {
   return base.join(" ");
 }
 
-function startAckWatchdog(i: Interaction): void {
+function startAckWatchdogAndFailsafe(i: Interaction): void {
+  // Goal: prevent Discord "Interaction failed" even if DB/REST is slow.
+  // - Watchdog: log if not acked quickly (so it shows on /logs).
+  // - Failsafe: if still not acked, attempt a defer to keep UX responsive.
   if (!("isRepliable" in i) || typeof (i as any).isRepliable !== "function") return;
   if (!(i as any).isRepliable()) return;
 
   const repliable = i as unknown as { replied?: boolean; deferred?: boolean };
+
+  // Log before the 3s Discord timeout window.
   setTimeout(() => {
     if (!repliable.replied && !repliable.deferred) {
       console.warn("[interaction] NOT ACKED IN TIME:", describeInteraction(i));
     }
-  }, 2500);
+  }, 2200);
+
+  // Last-resort defer (only if handler hasn't already acknowledged).
+  // Exclusions: showModal flows must NOT be deferred.
+  const isTicketOpenMenu = i.isStringSelectMenu() && i.customId === "ticket_open";
+  if (isTicketOpenMenu) return;
+
+  setTimeout(() => {
+    if (repliable.replied || repliable.deferred) return;
+
+    if (i.isButton()) {
+      // Defer update is safest for button interactions (allows followUp if needed).
+      void i.deferUpdate().catch((e) => {
+        console.error("[interaction] deferUpdate failsafe failed:", e);
+      });
+      return;
+    }
+
+    void (i as any)
+      .deferReply({ flags: MessageFlags.Ephemeral })
+      .catch((e: unknown) => {
+        console.error("[interaction] deferReply failsafe failed:", e);
+      });
+  }, 2600);
 }
 
 function normaliseFedsUrl(input: string): string {
@@ -232,7 +260,7 @@ const event = {
   name: "interactionCreate",
 
   async execute(interaction: Interaction, client: Client & { commands?: any }) {
-    startAckWatchdog(interaction);
+    startAckWatchdogAndFailsafe(interaction);
 
     // Slash commands
     if (interaction.isChatInputCommand()) {
