@@ -17,7 +17,6 @@ import {
 } from "discord.js";
 
 import * as db from "./database";
-import { getRecipientIds } from "./lib/dmRecipients";
 import { reconcileStaleTicketChannels } from "./lib/reconcileTicketChannels";
 import { startGistBackupScheduler } from "./lib/gistBackup";
 
@@ -107,8 +106,6 @@ if (!TOKEN) {
   throw new Error("[boot] Missing TOKEN or DISCORD_TOKEN in .env");
 }
 
-const ADMIN_USER_ID = requireEnv("ADMIN_USER_ID");
-
 console.log("[boot] dotenv loaded");
 console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
 console.log("[boot] PORT:", process.env.PORT || "not set");
@@ -133,127 +130,8 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-const notificationCooldowns = new Map<string, number>();
-const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000;
-
-function canSendNotification(key: string): boolean {
-  const now = Date.now();
-  const last = notificationCooldowns.get(key) || 0;
-
-  if (now - last < NOTIFY_COOLDOWN_MS) {
-    return false;
-  }
-
-  notificationCooldowns.set(key, now);
-  return true;
-}
-
-/** Delete all messages sent by the bot in a DM channel. Runs on startup to clear old DMs. */
-async function clearBotMessagesInChannel(channel: any, botId: string): Promise<number> {
-  let deleted = 0;
-  let before: string | undefined;
-  const DELAY_MS = 250;
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const opts: { limit: number; before?: string } = { limit: 100 };
-    if (before) opts.before = before;
-
-    const batch = await channel.messages.fetch(opts);
-    if (!batch.size) break;
-
-    const toDelete = batch.filter((m) => m.author.id === botId);
-    for (const msg of toDelete.values()) {
-      try {
-        await msg.delete();
-        deleted++;
-        await new Promise((r) => setTimeout(r, DELAY_MS));
-      } catch {
-        // ignore per-message errors (e.g. already deleted, rate limit)
-      }
-    }
-
-    const last = batch.last();
-    if (!last || batch.size < 100) break;
-    before = last.id;
-  }
-
-  return deleted;
-}
-
-/** Clear only admin DM and DMs we sent for tickets (no server/guild messages). */
-async function clearAllBotDMs(client: Client): Promise<void> {
-  const botId = client.user?.id;
-  if (!botId) return;
-
-  let totalDeleted = 0;
-
-  // 1. Clear admin DM
-  try {
-    const adminUser = await client.users.fetch(ADMIN_USER_ID);
-    const dmChannel = await adminUser.createDM();
-    const n = await clearBotMessagesInChannel(dmChannel, botId);
-    totalDeleted += n;
-    if (n > 0) {
-      console.log(`[ready] Cleared ${n} bot message(s) in admin DM`);
-    }
-  } catch (e) {
-    console.warn("[ready] Could not clear admin DM:", (e as Error)?.message || e);
-  }
-
-  // 2. Clear DMs we sent to users for ticket notifications (staff reply, etc.)
-  const ticketRecipientIds = getRecipientIds();
-  for (const userId of ticketRecipientIds) {
-    if (userId === ADMIN_USER_ID) continue;
-    try {
-      const user = await client.users.fetch(userId);
-      const dmChannel = await user.createDM();
-      const n = await clearBotMessagesInChannel(dmChannel, botId);
-      totalDeleted += n;
-      if (n > 0) {
-        console.log(`[ready] Cleared ${n} bot message(s) in ticket DM to ${userId}`);
-      }
-    } catch {
-      // ignore (user may have blocked bot or left)
-    }
-  }
-
-  if (totalDeleted > 0) {
-    console.log(`[ready] Cleared ${totalDeleted} total bot DM(s) on startup (admin + ticket recipients only)`);
-  }
-}
-
-async function sendAdminDm(
-  client: Client,
-  title: string,
-  lines: string[] = [],
-  options: { cooldownKey?: string; bypassCooldown?: boolean } = {}
-): Promise<void> {
-  const cooldownKey = options.cooldownKey || title;
-  const bypassCooldown = options.bypassCooldown === true;
-
-  if (!bypassCooldown && !canSendNotification(cooldownKey)) {
-    console.log(`[notify] Cooldown active, skipped DM: ${title}`);
-    return;
-  }
-
-  try {
-    const user = await client.users.fetch(ADMIN_USER_ID);
-
-    const content = [`**${title}**`, ...lines].join("\n");
-
-    await user.send(content);
-    console.log(`[notify] DM sent: ${title}`);
-  } catch (err) {
-    console.warn(
-      `[notify] Failed to send DM: ${title}`,
-      (err as Error)?.message || err
-    );
-  }
-}
-
-/** Set in `ClientReady` so process-level handlers and REST hooks can notify admin */
-let discordClientRef: Client | null = null;
+// NOTE: Admin DM notifications and DM cleanup are intentionally removed to reduce REST traffic/rate-limits.
+// Errors still surface via logs and the /logs + /status endpoints.
 
 function formatThrown(reason: unknown): string {
   if (reason instanceof Error) return reason.stack || reason.message;
@@ -302,33 +180,12 @@ function tryNotifyInteractionError(eventName: string, _err: unknown, args: unkno
 process.on("unhandledRejection", (reason) => {
   const text = formatThrown(reason);
   console.error("[process] unhandledRejection:", text);
-  void (async () => {
-    const c = discordClientRef;
-    if (!c) return;
-    await sendAdminDm(
-      c,
-      "⚠️ Unhandled promise rejection",
-      [text.length > 1700 ? `${text.slice(0, 1700)}…` : text],
-      { cooldownKey: "unhandled_rejection" }
-    );
-  })();
 });
 
 process.on("uncaughtException", (err) => {
   const text = formatThrown(err);
   console.error("[process] uncaughtException:", text);
-  void (async () => {
-    const c = discordClientRef;
-    if (c) {
-      await sendAdminDm(
-        c,
-        "💀 Uncaught exception — process exiting (host should restart)",
-        [text.length > 1700 ? `${text.slice(0, 1700)}…` : text],
-        { cooldownKey: "uncaught_exception", bypassCooldown: true }
-      );
-    }
-    setTimeout(() => process.exit(1), 1000);
-  })();
+  setTimeout(() => process.exit(1), 1000);
 });
 
 process.on("warning", (w) => {
@@ -1020,15 +877,6 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const detail = formatThrown(err);
     console.error("[web] route error:", detail);
-    const c = discordClientRef;
-    if (c) {
-      void sendAdminDm(
-        c,
-        "⚠️ Web route returned 500",
-        [detail.length > 1700 ? `${detail.slice(0, 1700)}…` : detail],
-        { cooldownKey: "web_route_500" }
-      );
-    }
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end("Server error");
   }
@@ -1132,15 +980,6 @@ function loadEvents(client: Client & { commands: CommandCollection }): void {
         const detail = formatThrown(err);
         console.error(`[events/${event.name}]`, detail);
         tryNotifyInteractionError(event.name, err, args);
-        const c = discordClientRef;
-        if (c) {
-          void sendAdminDm(
-            c,
-            `⚠️ Event handler error: ${event.name}`,
-            [detail.length > 1700 ? `${detail.slice(0, 1700)}…` : detail],
-            { cooldownKey: `event_err_${event.name}` }
-          );
-        }
       });
     };
 
@@ -1172,8 +1011,6 @@ async function startBot(): Promise<void> {
   client.commands = new Collection<string, CommandModule>() as unknown as CommandCollection;
 
   client.once(Events.ClientReady, async () => {
-    discordClientRef = client;
-
     updateStatus({
       state: "ready",
       lastReady: isoNow()
@@ -1194,8 +1031,6 @@ async function startBot(): Promise<void> {
     });
 
     console.log("[ready] Presence set");
-
-    await clearAllBotDMs(client);
 
     await reconcileStaleTicketChannels(client);
 
@@ -1225,18 +1060,6 @@ async function startBot(): Promise<void> {
       console.warn("[ready] Permission self-check failed:", (e as Error)?.message || e);
     }
 
-    await sendAdminDm(
-      client,
-      "🟢 Feds Agent Online",
-      [
-        `Bot: ${client.user.tag}`,
-        `Time: ${isoNow()}`,
-        `State: READY`
-      ],
-      {
-        cooldownKey: "ready"
-      }
-    );
   });
 
   client.on("shardDisconnect", async (e) => {
@@ -1251,37 +1074,11 @@ async function startBot(): Promise<void> {
     });
 
     console.warn("[gateway] disconnect", (e as any)?.code, (e as any)?.reason);
-
-    await sendAdminDm(
-      client,
-      "🔴 Feds Agent Disconnected",
-      [
-        `Time: ${isoNow()}`,
-        `Code: ${(e as any)?.code ?? "unknown"}`,
-        `Reason: ${(e as any)?.reason ?? "unknown"}`,
-        `Was Clean: ${String((e as any)?.wasClean ?? false)}`
-      ],
-      {
-        cooldownKey: "disconnect"
-      }
-    );
   });
 
   client.on("shardReconnecting", async () => {
     updateStatus({ state: "reconnecting" });
     console.log("[gateway] reconnecting...");
-
-    await sendAdminDm(
-      client,
-      "🟠 Feds Agent Reconnecting",
-      [
-        `Time: ${isoNow()}`,
-        `State: RECONNECTING`
-      ],
-      {
-        cooldownKey: "reconnecting"
-      }
-    );
   });
 
   client.on("shardResume", (id, replayedEvents) => {
@@ -1382,21 +1179,6 @@ async function startBot(): Promise<void> {
       console.warn(
         "[boot] Login has not reached ready after 90 seconds"
       );
-
-      await sendAdminDm(
-        client,
-        "🟡 Feds Agent Login Stalled",
-        [
-          `Time: ${isoNow()}`,
-          `State: LOGIN_STALLED`,
-          `Last Debug: ${
-            (botStatus as any).lastDebug?.message || "none"
-          }`
-        ],
-        {
-          cooldownKey: "login_stalled"
-        }
-      );
     }
   }, 90000);
 
@@ -1415,31 +1197,6 @@ startBot().catch(async (err) => {
   });
 
   console.error("[fatal] bot failed:", (err as Error)?.stack || err);
-
-  try {
-    const tempClient = new Client({
-      intents: [GatewayIntentBits.Guilds]
-    });
-
-    await tempClient.login(TOKEN);
-
-    await sendAdminDm(
-      tempClient,
-      "💥 Feds Agent Startup Failed",
-      [
-        `Time: ${isoNow()}`,
-        `Error: ${(err as Error)?.message || String(err)}`
-      ],
-      {
-        cooldownKey: "startup_failed",
-        bypassCooldown: true
-      }
-    );
-
-    await tempClient.destroy();
-  } catch {
-    // ignore
-  }
 
   process.exit(1);
 });

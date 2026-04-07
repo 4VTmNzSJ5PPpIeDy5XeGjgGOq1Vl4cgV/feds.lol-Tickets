@@ -51,7 +51,7 @@ Copy `.env.example` to `.env` and fill in values. Never commit `.env` (it is in 
 | `CLIENT_ID` | Application (client) ID for slash commands |
 | `GUILD_ID` | Server ID where commands are registered |
 | `DATABASE_URL` | Full PostgreSQL URL (use **External** URL from Render when running locally; host must be e.g. `xxx.oregon-postgres.render.com`) |
-| `ADMIN_USER_ID` | Your user ID for status/alert DMs |
+| `ADMIN_USER_ID` | (Deprecated) formerly used for status/alert DMs |
 
 **Optional:**
 
