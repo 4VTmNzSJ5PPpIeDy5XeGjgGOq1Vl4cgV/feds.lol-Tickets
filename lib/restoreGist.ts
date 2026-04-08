@@ -26,8 +26,12 @@ function parseGistId(input: string): string {
 }
 
 async function fetchJson(url: string): Promise<any> {
+  const token = (process.env.GITHUB_GIST_TOKEN || "").trim();
   const res = await fetch(url, {
-    headers: { "User-Agent": "feds-agent-restore" }
+    headers: {
+      "User-Agent": "feds-agent-restore",
+      ...(token ? { Authorization: `token ${token}` } : {})
+    }
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
@@ -37,8 +41,12 @@ async function fetchJson(url: string): Promise<any> {
 }
 
 async function fetchText(url: string): Promise<string> {
+  const token = (process.env.GITHUB_GIST_TOKEN || "").trim();
   const res = await fetch(url, {
-    headers: { "User-Agent": "feds-agent-restore" }
+    headers: {
+      "User-Agent": "feds-agent-restore",
+      ...(token ? { Authorization: `token ${token}` } : {})
+    }
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
