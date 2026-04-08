@@ -557,10 +557,14 @@ const event = {
           content: `Your ticket has been created: ${ticketChannel}`
         });
       } catch (e) {
-        console.error("[tickets] create ticket modal failed:", e);
         if (autoModBlockMessage(e)) {
+          console.warn(
+            "[tickets] create ticket modal blocked by AutoMod:",
+            (e as Error)?.message || e
+          );
           return interaction.editReply({ content: userFacingAutoModHelp() });
         }
+        console.error("[tickets] create ticket modal failed:", e);
         return interaction.editReply({
           content: "Something went wrong creating that ticket. Please try again."
         });

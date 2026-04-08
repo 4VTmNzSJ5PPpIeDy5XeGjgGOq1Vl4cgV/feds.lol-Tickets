@@ -23,6 +23,8 @@ export function autoModBlockMessage(err: unknown): string | null {
   if (msg.includes("cannot send") && msg.includes("blocked")) return "AutoMod blocked the content in your message.";
   if (msg.includes("contains") && msg.includes("not allowed"))
     return "AutoMod blocked the content in your message.";
+  if (msg.includes("invalid_community_property_name"))
+    return "AutoMod blocked the content in your message.";
   if (msg.includes("keyword") && msg.includes("blocked")) return "AutoMod blocked the content in your message.";
   if (msg.includes("content") && msg.includes("blocked")) return "AutoMod blocked the content in your message.";
 

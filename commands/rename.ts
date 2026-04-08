@@ -96,10 +96,11 @@ const command = {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (channel as any).setName(newName, `Renamed by ${actor.tag}`);
     } catch (e) {
-      console.error("[rename] setName failed:", e);
       if (autoModBlockMessage(e)) {
+        console.warn("[rename] setName blocked by AutoMod:", (e as Error)?.message || e);
         return interaction.editReply({ content: userFacingAutoModHelp() });
       }
+      console.error("[rename] setName failed:", e);
       return interaction.editReply({
         content: "Failed to rename the channel. (Check bot permissions.)"
       });
