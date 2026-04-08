@@ -372,206 +372,199 @@ const event = {
     ) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const categoryKey = interaction.customId.replace("ticket_modal_", "").trim();
-      const meta = (CATEGORY_META as any)[categoryKey];
-      const guild = interaction.guild!;
-      const user = interaction.user;
-
-      if (!meta) {
-        return interaction.editReply({ content: "Unknown category." });
-      }
-
-      const existing = await db.getOpenTicketByUser(guild.id, user.id);
-      if (existing) {
-        return interaction.editReply({
-          content: `You already have an open ticket: <#${existing.channel_id}>`
-        });
-      }
-
-      const lastUsed = ticketCooldowns.get(user.id) || 0;
-      const now = Date.now();
-      if (now - lastUsed < TICKET_COOLDOWN_MS) {
-        const seconds = Math.ceil(
-          (TICKET_COOLDOWN_MS - (now - lastUsed)) / 1000
-        );
-        return interaction.editReply({
-          content: `Slow down. Wait ${seconds}s before opening another ticket.`
-        });
-      }
-
-      const briefDescription = interaction.fields
-        .getTextInputValue("brief_description")
-        .trim();
-
-      let fedsUrl: string;
       try {
-        fedsUrl = normaliseFedsUrl(
-          interaction.fields.getTextInputValue("feds_url")
-        );
-      } catch (err) {
-        return interaction.editReply({ content: (err as Error).message });
-      }
+        const categoryKey = interaction.customId.replace("ticket_modal_", "").trim();
+        const meta = (CATEGORY_META as any)[categoryKey];
+        const guild = interaction.guild!;
+        const user = interaction.user;
 
-      const supportRoleIds = SUPPORT_ROLE_IDS;
-      const parentId = process.env[meta.categoryEnv]?.trim() || undefined;
-      if (!parentId) {
-        console.warn(
-          `[tickets] No category set for "${categoryKey}". Add ${meta.categoryEnv}=<category_channel_id> to .env (right‑click the category in Discord → Copy ID).`
-        );
-      }
-      const member = await guild.members.fetch(user.id);
-      const channelName = buildChannelName(briefDescription, fedsUrl);
-
-      const overwrites: any[] = [
-        {
-          id: guild.roles.everyone,
-          deny: [PermissionFlagsBits.ViewChannel]
-        },
-        {
-          id: member.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.EmbedLinks
-          ]
-        },
-        {
-          id: client.user!.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageChannels,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.EmbedLinks
-          ]
+        if (!meta) {
+          return interaction.editReply({ content: "Unknown category." });
         }
-      ];
 
-      for (const roleId of supportRoleIds) {
-        const role =
-          guild.roles.cache.get(roleId) ??
-          (await guild.roles.fetch(roleId).catch(() => null));
-        if (role) {
-          overwrites.push({
-            id: role.id,
+        const existing = await db.getOpenTicketByUser(guild.id, user.id);
+        if (existing) {
+          return interaction.editReply({
+            content: `You already have an open ticket: <#${existing.channel_id}>`
+          });
+        }
+
+        const lastUsed = ticketCooldowns.get(user.id) || 0;
+        const now = Date.now();
+        if (now - lastUsed < TICKET_COOLDOWN_MS) {
+          const seconds = Math.ceil(
+            (TICKET_COOLDOWN_MS - (now - lastUsed)) / 1000
+          );
+          return interaction.editReply({
+            content: `Slow down. Wait ${seconds}s before opening another ticket.`
+          });
+        }
+
+        const briefDescription = interaction.fields
+          .getTextInputValue("brief_description")
+          .trim();
+
+        let fedsUrl: string;
+        try {
+          fedsUrl = normaliseFedsUrl(
+            interaction.fields.getTextInputValue("feds_url")
+          );
+        } catch (err) {
+          return interaction.editReply({ content: (err as Error).message });
+        }
+
+        const supportRoleIds = SUPPORT_ROLE_IDS;
+        const parentId = process.env[meta.categoryEnv]?.trim() || undefined;
+        if (!parentId) {
+          console.warn(
+            `[tickets] No category set for "${categoryKey}". Add ${meta.categoryEnv}=<category_channel_id> to .env (right‑click the category in Discord → Copy ID).`
+          );
+        }
+        const member = await guild.members.fetch(user.id);
+        const channelName = buildChannelName(briefDescription, fedsUrl);
+
+        const overwrites: any[] = [
+          {
+            id: guild.roles.everyone,
+            deny: [PermissionFlagsBits.ViewChannel]
+          },
+          {
+            id: member.id,
             allow: [
               PermissionFlagsBits.ViewChannel,
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
-              PermissionFlagsBits.ManageMessages,
               PermissionFlagsBits.AttachFiles,
               PermissionFlagsBits.EmbedLinks
             ]
-          });
-        }
-      }
+          },
+          {
+            id: client.user!.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.ManageChannels,
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.EmbedLinks
+            ]
+          }
+        ];
 
-      let ticketChannel: TextChannel;
-      try {
-        ticketChannel = (await guild.channels.create({
+        for (const roleId of supportRoleIds) {
+          const role =
+            guild.roles.cache.get(roleId) ??
+            (await guild.roles.fetch(roleId).catch(() => null));
+          if (role) {
+            overwrites.push({
+              id: role.id,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.ManageMessages,
+                PermissionFlagsBits.AttachFiles,
+                PermissionFlagsBits.EmbedLinks
+              ]
+            });
+          }
+        }
+
+        const ticketChannel = (await guild.channels.create({
           name: channelName,
           type: ChannelType.GuildText,
           parent: parentId,
           permissionOverwrites: overwrites,
           topic: `Ticket for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`
         })) as TextChannel;
-      } catch (e) {
-        const autoMod = autoModBlockMessage(e);
-        if (autoMod) {
-          return interaction.editReply({ content: userFacingAutoModHelp() });
+
+        const ticketRecord = await db.createTicket({
+          guildId: guild.id,
+          channelId: ticketChannel.id,
+          userId: user.id,
+          username: user.tag,
+          categoryKey,
+          briefDescription,
+          fedsUrl
+        });
+
+        try {
+          await ticketChannel.setTopic(
+            `Ticket #${ticketRecord.id} for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`
+          );
+        } catch {
+          // ignore topic failures
         }
-        throw e;
-      }
 
-      const ticketRecord = await db.createTicket({
-        guildId: guild.id,
-        channelId: ticketChannel.id,
-        userId: user.id,
-        username: user.tag,
-        categoryKey,
-        briefDescription,
-        fedsUrl
-      });
+        ticketCooldowns.set(user.id, now);
 
-      try {
-        await ticketChannel.setTopic(
-          `Ticket #${ticketRecord.id} for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`
+        const guidance = (meta as { guidance?: string }).guidance ?? "";
+        const openEmbed = new EmbedBuilder()
+          .setTitle(`${meta.emoji} ${meta.label}`)
+          .setDescription(
+            `Welcome ${user}, thanks for reaching out.\n\n` +
+              `A staff member will assist you soon.\n\n` +
+              `> Press **Close Ticket** below if your issue is resolved.\n\n` +
+              (guidance ? `${guidance}` : "")
+          )
+          .addFields(
+            { name: "Ticket ID", value: `#${ticketRecord.id}`, inline: true },
+            { name: "Category", value: meta.label, inline: true },
+            { name: "Brief Description", value: briefDescription, inline: false },
+            { name: "Feds URL", value: fedsUrl, inline: false }
+          )
+          .setColor(meta.color)
+          .setFooter({ text: `Opened by ${user.tag}` })
+          .setTimestamp();
+
+        const closeBtn = new ButtonBuilder()
+          .setCustomId(`ticket_close_${user.id}`)
+          .setLabel("Close Ticket")
+          .setEmoji("<:close:1480625255130075417>")
+          .setStyle(ButtonStyle.Secondary);
+
+        const claimBtn = new ButtonBuilder()
+          .setCustomId(`ticket_claim_${user.id}`)
+          .setLabel("Claim")
+          .setEmoji({ id: "1478268515117961226", name: "claim" })
+          .setStyle(ButtonStyle.Secondary);
+
+        const escalateBtn = new ButtonBuilder()
+          .setCustomId(`ticket_escalate_${user.id}`)
+          .setLabel("Escalate")
+          .setEmoji({ id: "1478268560471097354", name: "report" })
+          .setStyle(ButtonStyle.Secondary);
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          closeBtn,
+          claimBtn,
+          escalateBtn
         );
-      } catch {
-        // ignore topic failures
-      }
 
-      ticketCooldowns.set(user.id, now);
+        const mentionContent = supportRoleIds.length
+          ? supportRoleIds.map((id) => `<@&${id}>`).join(" ")
+          : undefined;
 
-      const guidance = (meta as { guidance?: string }).guidance ?? "";
-      const openEmbed = new EmbedBuilder()
-        .setTitle(`${meta.emoji} ${meta.label}`)
-        .setDescription(
-          `Welcome ${user}, thanks for reaching out.\n\n` +
-            `A staff member will assist you soon.\n\n` +
-            `> Press **Close Ticket** below if your issue is resolved.\n\n` +
-            (guidance ? `${guidance}` : "")
-        )
-        .addFields(
-          { name: "Ticket ID", value: `#${ticketRecord.id}`, inline: true },
-          { name: "Category", value: meta.label, inline: true },
-          { name: "Brief Description", value: briefDescription, inline: false },
-          { name: "Feds URL", value: fedsUrl, inline: false }
-        )
-        .setColor(meta.color)
-        .setFooter({ text: `Opened by ${user.tag}` })
-        .setTimestamp();
-
-      const closeBtn = new ButtonBuilder()
-        .setCustomId(`ticket_close_${user.id}`)
-        .setLabel("Close Ticket")
-        .setEmoji("<:close:1480625255130075417>")
-        .setStyle(ButtonStyle.Secondary);
-
-      const claimBtn = new ButtonBuilder()
-        .setCustomId(`ticket_claim_${user.id}`)
-        .setLabel("Claim")
-        .setEmoji({ id: "1478268515117961226", name: "claim" })
-        .setStyle(ButtonStyle.Secondary);
-
-      const escalateBtn = new ButtonBuilder()
-        .setCustomId(`ticket_escalate_${user.id}`)
-        .setLabel("Escalate")
-        .setEmoji({ id: "1478268560471097354", name: "report" })
-        .setStyle(ButtonStyle.Secondary);
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        closeBtn,
-        claimBtn,
-        escalateBtn
-      );
-
-      const mentionContent = supportRoleIds.length
-        ? supportRoleIds.map((id) => `<@&${id}>`).join(" ")
-        : undefined;
-
-      try {
         await ticketChannel.send({
           content: mentionContent,
           embeds: [openEmbed],
           components: [row]
         });
+
+        await sendLog(guild, ticketChannel.name, user, "Opened", meta.label);
+
+        return interaction.editReply({
+          content: `Your ticket has been created: ${ticketChannel}`
+        });
       } catch (e) {
-        const autoMod = autoModBlockMessage(e);
-        if (autoMod) {
+        console.error("[tickets] create ticket modal failed:", e);
+        if (autoModBlockMessage(e)) {
           return interaction.editReply({ content: userFacingAutoModHelp() });
         }
-        throw e;
+        return interaction.editReply({
+          content: "Something went wrong creating that ticket. Please try again."
+        });
       }
-
-      await sendLog(guild, ticketChannel.name, user, "Opened", meta.label);
-
-      return interaction.editReply({
-        content: `Your ticket has been created: ${ticketChannel}`
-      });
     }
 
     // Claim ticket
