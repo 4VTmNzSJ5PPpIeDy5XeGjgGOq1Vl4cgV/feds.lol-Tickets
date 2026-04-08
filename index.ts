@@ -493,7 +493,6 @@ input[type="text"]:focus {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  text-decoration: none;
   color: inherit;
   transition: border-color .15s, background .15s;
 }
@@ -501,6 +500,8 @@ input[type="text"]:focus {
   background: var(--bg-elevated);
   border-color: var(--accent);
 }
+.transcript-card a { text-decoration: none; }
+.transcript-card a:hover { text-decoration: underline; }
 .transcript-head {
   display: flex;
   align-items: baseline;
@@ -937,10 +938,10 @@ const server = http.createServer(async (req, res) => {
             ? filtered
                 .map(
                   (row) => `
-            <a href="/transcripts/${row.id}?key=${keyParam}" class="transcript-card">
+            <div class="transcript-card">
               <div class="transcript-head">
                 <div class="transcript-title">${escapeHtml(String(row.channel_name || "ticket"))}</div>
-                <span class="open-link">Open →</span>
+                <a class="open-link" href="/transcripts/${row.id}?key=${keyParam}">Open →</a>
               </div>
               <div class="transcript-sub">
                 Transcript <span class="code">#${escapeHtml(String(row.id))}</span>
@@ -953,15 +954,15 @@ const server = http.createServer(async (req, res) => {
               <div class="meta">
                 ${
                   row.ticket_user_id
-                    ? `User <a class="code" href="${discordUserUrl(
-                        String(row.ticket_user_id)
-                      )}" target="_blank" rel="noreferrer">&lt;@${escapeHtml(
-                        String(row.ticket_user_id)
-                      )}&gt;</a> · `
+                    ? `User <a class="code" href="${discordUserUrl(String(row.ticket_user_id))}" target="_blank" rel="noreferrer">&lt;@${escapeHtml(String(row.ticket_user_id))}&gt;</a> · `
                     : ""
-                }Closed by ${escapeHtml(row.closed_by)} · ${new Date(row.created_at).toLocaleString("en-GB")}
+                }Closed by ${
+                    row.closed_by_id
+                      ? `<a class="code" href="${discordUserUrl(String(row.closed_by_id))}" target="_blank" rel="noreferrer">${escapeHtml(row.closed_by)}</a>`
+                      : `${escapeHtml(row.closed_by)}`
+                  } · ${new Date(row.created_at).toLocaleString("en-GB")}
               </div>
-            </a>
+            </div>
           `
                 )
                 .join("")
