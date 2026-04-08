@@ -615,9 +615,13 @@ const event = {
         });
       }
 
-      await channel
-        .send({ content: `Ticket claimed by ${user}.` })
-        .catch((e) => console.error("[tickets] claim channel.send failed:", e));
+      const claimContent = `Ticket claimed by ${user}.`;
+      await channel.send({ content: claimContent }).catch(async (e) => {
+        console.error("[tickets] claim channel.send failed:", e);
+        await button
+          .followUp({ content: claimContent })
+          .catch((e2) => console.error("[tickets] claim followUp failed:", e2));
+      });
       return;
     }
 
@@ -693,9 +697,13 @@ const event = {
         });
       }
 
-      await channel
-        .send({ content: `Ticket escalated by ${user}. <@&${escalateRoleId}>` })
-        .catch((e) => console.error("[tickets] escalate channel.send failed:", e));
+      const escalateContent = `Ticket escalated by ${user}. <@&${escalateRoleId}>`;
+      await channel.send({ content: escalateContent }).catch(async (e) => {
+        console.error("[tickets] escalate channel.send failed:", e);
+        await button
+          .followUp({ content: escalateContent })
+          .catch((e2) => console.error("[tickets] escalate followUp failed:", e2));
+      });
       return;
     }
 
