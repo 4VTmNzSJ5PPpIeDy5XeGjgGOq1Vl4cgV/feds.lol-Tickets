@@ -90,7 +90,12 @@ const categoryStatus = Object.entries(CATEGORY_META).map(([key, meta]) => {
   const id = process.env[meta.categoryEnv]?.trim();
   return `${key}=${id ? "ok" : "MISSING"}`;
 });
-console.log("[tickets] Category channels:", categoryStatus.join(", "));
+const missingCategories = categoryStatus.filter((s) => s.endsWith("=MISSING"));
+if (missingCategories.length) {
+  console.warn("[tickets] Missing category env(s):", missingCategories.join(", "));
+} else {
+  console.log("[tickets] Ticket categories configured.");
+}
 
 const claimedTickets = new Map<string, string>();
 const escalatedTickets = new Set<string>();
@@ -824,7 +829,17 @@ const event = {
         const savedTranscript = await db.saveTranscript(
           channel.name,
           user.tag,
-          content
+          content,
+          {
+            guildId: guild.id,
+            channelId: channel.id,
+            ticketId: ticket.id,
+            ticketUserId: ticket.user_id,
+            ticketCategoryKey: ticket.category_key,
+            ticketBriefDescription: ticket.brief_description,
+            ticketFedsUrl: ticket.feds_url,
+            closedById: user.id
+          }
         );
 
         const transcriptBaseUrl = process.env.TRANSCRIPT_BASE_URL?.trim();

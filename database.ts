@@ -35,12 +35,33 @@ export async function init(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS transcripts (
       id SERIAL PRIMARY KEY,
+      guild_id TEXT NULL,
+      channel_id TEXT NULL,
+      ticket_id INT NULL,
+      ticket_user_id TEXT NULL,
+      ticket_category_key TEXT NULL,
+      ticket_brief_description TEXT NULL,
+      ticket_feds_url TEXT NULL,
+      closed_by_id TEXT NULL,
       channel_name TEXT NOT NULL,
       closed_by TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  // Backfill/migrations for existing deployments.
+  // Safe on fresh installs (columns already exist).
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS guild_id TEXT NULL`);
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS channel_id TEXT NULL`);
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS ticket_id INT NULL`);
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS ticket_user_id TEXT NULL`);
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS ticket_category_key TEXT NULL`);
+  await pool.query(
+    `ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS ticket_brief_description TEXT NULL`
+  );
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS ticket_feds_url TEXT NULL`);
+  await pool.query(`ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS closed_by_id TEXT NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -66,6 +87,14 @@ export async function init(): Promise<void> {
 
 export interface TranscriptRow {
   id: number;
+  guild_id?: string | null;
+  channel_id?: string | null;
+  ticket_id?: number | null;
+  ticket_user_id?: string | null;
+  ticket_category_key?: string | null;
+  ticket_brief_description?: string | null;
+  ticket_feds_url?: string | null;
+  closed_by_id?: string | null;
   channel_name: string;
   closed_by: string;
   content: string;
@@ -89,13 +118,47 @@ export interface TicketRow {
 export async function saveTranscript(
   channelName: string,
   closedBy: string,
-  content: string
+  content: string,
+  meta?: {
+    guildId?: string;
+    channelId?: string;
+    ticketId?: number;
+    ticketUserId?: string;
+    ticketCategoryKey?: string;
+    ticketBriefDescription?: string;
+    ticketFedsUrl?: string;
+    closedById?: string;
+  }
 ): Promise<Omit<TranscriptRow, "content">> {
   const result = await pool.query<TranscriptRow>(
-    `INSERT INTO transcripts (channel_name, closed_by, content)
-     VALUES ($1, $2, $3)
+    `INSERT INTO transcripts (
+       channel_name,
+       closed_by,
+       content,
+       guild_id,
+       channel_id,
+       ticket_id,
+       ticket_user_id,
+       ticket_category_key,
+       ticket_brief_description,
+       ticket_feds_url,
+       closed_by_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id, channel_name, closed_by, created_at`,
-    [channelName, closedBy, content]
+    [
+      channelName,
+      closedBy,
+      content,
+      meta?.guildId ?? null,
+      meta?.channelId ?? null,
+      meta?.ticketId ?? null,
+      meta?.ticketUserId ?? null,
+      meta?.ticketCategoryKey ?? null,
+      meta?.ticketBriefDescription ?? null,
+      meta?.ticketFedsUrl ?? null,
+      meta?.closedById ?? null
+    ]
   );
 
   const row = result.rows[0];
@@ -186,6 +249,21 @@ export async function closeTicketByChannel(channelId: string): Promise<TicketRow
   return result.rows[0] ?? null;
 }
 
+export async function updateTicketCategoryByChannel(
+  channelId: string,
+  categoryKey: string
+): Promise<TicketRow | null> {
+  const result = await pool.query<TicketRow>(
+    `UPDATE tickets
+     SET category_key = $2
+     WHERE channel_id = $1
+     RETURNING *`,
+    [channelId, categoryKey]
+  );
+
+  return result.rows[0] ?? null;
+}
+
 /** Recently closed tickets — used on boot to delete channels if a prior run crashed before the timer fired. */
 export async function listClosedTicketsChannelsForCleanup(
   maxAgeHours = 48,
@@ -212,7 +290,19 @@ export async function listTranscripts(limit = 100): Promise<TranscriptRow[]> {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
 
   const result = await pool.query<TranscriptRow>(
-    `SELECT id, channel_name, closed_by, created_at
+    `SELECT
+       id,
+       channel_name,
+       closed_by,
+       created_at,
+       guild_id,
+       channel_id,
+       ticket_id,
+       ticket_user_id,
+       ticket_category_key,
+       ticket_brief_description,
+       ticket_feds_url,
+       closed_by_id
      FROM transcripts
      ORDER BY created_at DESC
      LIMIT $1`,
@@ -224,7 +314,20 @@ export async function listTranscripts(limit = 100): Promise<TranscriptRow[]> {
 
 export async function getTranscriptById(id: number): Promise<TranscriptRow | null> {
   const result = await pool.query<TranscriptRow>(
-    `SELECT id, channel_name, closed_by, content, created_at
+    `SELECT
+       id,
+       channel_name,
+       closed_by,
+       content,
+       created_at,
+       guild_id,
+       channel_id,
+       ticket_id,
+       ticket_user_id,
+       ticket_category_key,
+       ticket_brief_description,
+       ticket_feds_url,
+       closed_by_id
      FROM transcripts
      WHERE id = $1
      LIMIT 1`,

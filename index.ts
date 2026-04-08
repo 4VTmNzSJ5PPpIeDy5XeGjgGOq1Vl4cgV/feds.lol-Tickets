@@ -75,6 +75,7 @@ function addRuntimeLog(level: LogLevel, args: unknown[]): void {
 const originalConsoleLog = console.log.bind(console);
 const originalConsoleWarn = console.warn.bind(console);
 const originalConsoleError = console.error.bind(console);
+const originalConsoleDebug = console.debug.bind(console);
 
 console.log = (...args: unknown[]) => {
   addRuntimeLog("log", args);
@@ -91,7 +92,12 @@ console.error = (...args: unknown[]) => {
   originalConsoleError(...args);
 };
 
-console.log("==> BUILD MARKER: CLEAN-STABLE-BOOT-GATEWAY-DEBUG-NOTIFY-COOLDOWN");
+// Debug logs are captured for /logs.json but not printed to stdout by default.
+console.debug = (...args: unknown[]) => {
+  addRuntimeLog("log", ["[debug]", ...args]);
+  // Intentionally do not echo to stdout to avoid noisy platform logs.
+  void originalConsoleDebug;
+};
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -106,10 +112,13 @@ if (!TOKEN) {
   throw new Error("[boot] Missing TOKEN or DISCORD_TOKEN in .env");
 }
 
-console.log("[boot] dotenv loaded");
-console.log("[boot] NODE_ENV:", process.env.NODE_ENV || "not set");
-console.log("[boot] PORT:", process.env.PORT || "not set");
-console.log("[boot] MESSAGE_CONTENT_INTENT_REQUIRED:", true);
+console.log(
+  "[boot] starting",
+  "env=",
+  process.env.NODE_ENV || "not set",
+  "port=",
+  process.env.PORT || "not set"
+);
 
 const botStatus: BotStatus = {
   state: "starting",
@@ -204,6 +213,10 @@ function escapeHtml(value: unknown): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function discordUserUrl(userId: string): string {
+  return `https://discord.com/users/${encodeURIComponent(userId)}`;
 }
 
 function isTranscriptAuthorised(urlObj: URL): boolean {
@@ -524,6 +537,76 @@ input[type="text"]:focus {
 </html>`;
 }
 
+type NavKey = "status" | "logs" | "errors" | "transcripts";
+
+function renderAppHeader(opts: {
+  active: NavKey;
+  title: string;
+  subtitleHtml: string;
+  transcriptsKey?: string | null;
+  extraNavHtml?: string;
+}): string {
+  const tKey = opts.transcriptsKey ? `?key=${encodeURIComponent(opts.transcriptsKey)}` : "";
+  const link = (href: string, label: string, key: NavKey) => {
+    const activeStyle =
+      key === opts.active
+        ? ' style="background:var(--bg-elevated);border-color:var(--accent)"'
+        : "";
+    return `<a href="${href}"${activeStyle}>${label}</a>`;
+  };
+
+  return `
+    <header class="header">
+      <div>
+        <h1>${escapeHtml(opts.title)}</h1>
+        <p class="subtitle">${opts.subtitleHtml}</p>
+      </div>
+      <nav class="nav">
+        ${link("/status", "Status", "status")}
+        ${link("/logs", "Logs", "logs")}
+        ${link("/errors", "Errors", "errors")}
+        ${link(`/transcripts${tKey}`, "Transcripts", "transcripts")}
+        <a href="/healthz">Health</a>
+        ${opts.extraNavHtml || ""}
+      </nav>
+    </header>
+  `;
+}
+
+function renderTranscriptKeyPromptPage(opts: {
+  pathname: string;
+  q?: string;
+  title: string;
+  subtitle: string;
+}): string {
+  const qHidden = opts.q
+    ? `<input type="hidden" name="q" value="${escapeHtml(opts.q)}">`
+    : "";
+
+  const body = `
+    ${renderAppHeader({
+      active: "transcripts",
+      title: opts.title,
+      subtitleHtml: escapeHtml(opts.subtitle),
+      transcriptsKey: null
+    })}
+
+    <div class="card search-card">
+      <h2>Access required</h2>
+      <form method="GET" action="${escapeHtml(opts.pathname)}">
+        <input type="password" name="key" placeholder="Enter transcript key">
+        ${qHidden}
+        <button type="submit" class="btn">Unlock</button>
+      </form>
+      <div class="muted" style="margin-top:.75rem;">
+        This area is protected. Ask an admin for the transcript key.
+      </div>
+    </div>
+  `;
+
+  return basePage("Transcripts (locked)", body);
+}
+
 function renderStatusPage(): string {
   const tone = statusTone(botStatus.state);
 
@@ -557,19 +640,11 @@ function renderStatusPage(): string {
   return basePage(
     "Feds Agent Status",
     `
-    <header class="header">
-      <div>
-        <h1>Feds Agent Status</h1>
-        <p class="subtitle">Live runtime overview for the bot and web service.</p>
-      </div>
-      <nav class="nav">
-        <a href="/status">Status</a>
-        <a href="/logs">Logs</a>
-        <a href="/status.json">JSON</a>
-        <a href="/logs.json">Logs JSON</a>
-        <a href="/healthz">Health</a>
-      </nav>
-    </header>
+    ${renderAppHeader({
+      active: "status",
+      title: "Feds Agent Status",
+      subtitleHtml: "Live runtime overview for the bot and web service."
+    })}
 
     <div class="grid">
       <div class="card kpi">
@@ -603,9 +678,15 @@ function renderStatusPage(): string {
   );
 }
 
-function renderLogsPage(): string {
-  const logsHtml = runtimeLogs.length
-    ? runtimeLogs
+function renderLogsPage(opts: {
+  title: string;
+  subtitleHtml: string;
+  logs: RuntimeLogEntry[];
+  active: NavKey;
+  transcriptsKey?: string | null;
+}): string {
+  const logsHtml = opts.logs.length
+    ? opts.logs
         .slice()
         .reverse()
         .map(
@@ -622,30 +703,33 @@ function renderLogsPage(): string {
     `
         )
         .join("")
-    : `<div class="card empty-state">No runtime logs captured yet. Events will appear here after the bot runs.</div>`;
+    : `<div class="card empty-state">No entries yet.</div>`;
 
   return basePage(
-    "Feds Agent Logs",
+    opts.title,
     `
-    <header class="header">
-      <div>
-        <h1>Runtime Logs</h1>
-        <p class="subtitle">Latest ${runtimeLogs.length} in-memory events. JSON: <a href="/logs.json">/logs.json</a></p>
-      </div>
-      <nav class="nav">
-        <a href="/status">Status</a>
-        <a href="/logs">Logs</a>
-        <a href="/status.json">JSON</a>
-        <a href="/logs.json">Logs JSON</a>
-        <a href="/healthz">Health</a>
-      </nav>
-    </header>
+    ${renderAppHeader({
+      active: opts.active,
+      title: opts.title,
+      subtitleHtml: opts.subtitleHtml,
+      transcriptsKey: opts.transcriptsKey ?? null
+    })}
 
     <div class="logs">
       ${logsHtml}
     </div>
   `
   );
+}
+
+function renderErrorsPage(): string {
+  const logs = runtimeLogs.filter((e) => e.level !== "log");
+  return renderLogsPage({
+    title: "Errors & Warnings",
+    subtitleHtml: `Latest ${logs.length} warn/error event(s).`,
+    logs,
+    active: "errors"
+  });
 }
 
 function shouldLogRequest(req: http.IncomingMessage, pathname: string): boolean {
@@ -657,8 +741,7 @@ function shouldLogRequest(req: http.IncomingMessage, pathname: string): boolean 
     "/healthz",
     "/status",
     "/logs",
-    "/status.json",
-    "/logs.json"
+    "/errors"
   ]);
 
   if (ignored.has(pathname)) return false;
@@ -718,7 +801,22 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === "/logs") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderLogsPage());
+      const level = (urlObj.searchParams.get("level") || "").trim().toLowerCase();
+      let logs = runtimeLogs;
+      if (level === "warn" || level === "error") {
+        logs = runtimeLogs.filter((e) => e.level === (level as LogLevel));
+      } else if (level === "warn,error" || level === "error,warn") {
+        logs = runtimeLogs.filter((e) => e.level !== "log");
+      }
+
+      res.end(
+        renderLogsPage({
+          title: "Runtime Logs",
+          subtitleHtml: `Latest ${logs.length} in-memory event(s).`,
+          logs,
+          active: "logs"
+        })
+      );
       if (logThisRequest) {
         console.log(`[web] finished in ${Date.now() - started}ms`);
       }
@@ -726,13 +824,51 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === "/logs.json") {
+      const level = (urlObj.searchParams.get("level") || "").trim().toLowerCase();
+      let logs = runtimeLogs;
+      if (level === "warn" || level === "error") {
+        logs = runtimeLogs.filter((e) => e.level === (level as LogLevel));
+      } else if (level === "warn,error" || level === "error,warn") {
+        logs = runtimeLogs.filter((e) => e.level !== "log");
+      }
+
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify(
           {
             service: "feds-agent",
-            count: runtimeLogs.length,
-            logs: runtimeLogs,
+            count: logs.length,
+            logs,
+            now: isoNow()
+          },
+          null,
+          2
+        )
+      );
+      if (logThisRequest) {
+        console.log(`[web] finished in ${Date.now() - started}ms`);
+      }
+      return;
+    }
+
+    if (pathname === "/errors") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderErrorsPage());
+      if (logThisRequest) {
+        console.log(`[web] finished in ${Date.now() - started}ms`);
+      }
+      return;
+    }
+
+    if (pathname === "/errors.json") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const logs = runtimeLogs.filter((e) => e.level !== "log");
+      res.end(
+        JSON.stringify(
+          {
+            service: "feds-agent",
+            count: logs.length,
+            logs,
             now: isoNow()
           },
           null,
@@ -747,8 +883,16 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) {
       if (!isTranscriptAuthorised(urlObj)) {
-        res.writeHead(403, { "Content-Type": "text/plain" });
-        res.end("Forbidden");
+        const q = (urlObj.searchParams.get("q") || "").trim();
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(
+          renderTranscriptKeyPromptPage({
+            pathname,
+            q: q || undefined,
+            title: "Ticket Transcripts",
+            subtitle: "Enter the transcript key to view transcripts."
+          })
+        );
         if (logThisRequest) {
           console.log(`[web] finished in ${Date.now() - started}ms`);
         }
@@ -769,15 +913,26 @@ const server = http.createServer(async (req, res) => {
           : rows;
 
         const keyParam = encodeURIComponent(urlObj.searchParams.get("key") || "");
+        const rawKey = urlObj.searchParams.get("key") || "";
         const cards =
           filtered.length > 0
             ? filtered
                 .map(
                   (row) => `
             <a href="/transcripts/${row.id}?key=${keyParam}" class="transcript-card">
-              <strong>#${row.id} ${escapeHtml(row.channel_name)}</strong>
+              <strong>#${row.id}${row.ticket_id ? ` · Ticket #${escapeHtml(String(row.ticket_id))}` : ""} ${escapeHtml(
+                    row.channel_name
+                  )}</strong>
               <div class="meta">
-                Closed by ${escapeHtml(row.closed_by)} · ${new Date(row.created_at).toLocaleString("en-GB")}
+                ${
+                  row.ticket_user_id
+                    ? `User <a class="code" href="${discordUserUrl(
+                        String(row.ticket_user_id)
+                      )}" target="_blank" rel="noreferrer">${escapeHtml(
+                        String(row.ticket_user_id)
+                      )}</a> · `
+                    : ""
+                }Closed by ${escapeHtml(row.closed_by)} · ${new Date(row.created_at).toLocaleString("en-GB")}
               </div>
               <span class="open-link">Open transcript →</span>
             </a>
@@ -787,17 +942,12 @@ const server = http.createServer(async (req, res) => {
             : `<div class="card empty-state">No transcripts found. Try a different search or check back later.</div>`;
 
         const html = `
-          <header class="header">
-            <div>
-              <h1>Ticket Transcripts</h1>
-              <p class="subtitle">${filtered.length} result(s). Search by channel name, closer, or ID.</p>
-            </div>
-            <nav class="nav">
-              <a href="/status">Status</a>
-              <a href="/logs">Logs</a>
-              <a href="/transcripts?key=${keyParam}">Transcripts</a>
-            </nav>
-          </header>
+          ${renderAppHeader({
+            active: "transcripts",
+            title: "Ticket Transcripts",
+            subtitleHtml: `${filtered.length} result(s). Search by channel name, closer, or ID.`,
+            transcriptsKey: rawKey
+          })}
 
           <div class="card search-card">
             <form method="GET" action="/transcripts">
@@ -835,22 +985,65 @@ const server = http.createServer(async (req, res) => {
         }
 
         const keyParam = encodeURIComponent(urlObj.searchParams.get("key") || "");
+        const rawKey = urlObj.searchParams.get("key") || "";
+        const metaRows: string[] = [];
+        if (transcript.ticket_id) metaRows.push(`Ticket #${escapeHtml(String(transcript.ticket_id))}`);
+        if (transcript.channel_id)
+          metaRows.push(`Channel ID <span class="code">${escapeHtml(String(transcript.channel_id))}</span>`);
+        if (transcript.ticket_category_key)
+          metaRows.push(`Category <span class="code">${escapeHtml(String(transcript.ticket_category_key))}</span>`);
+        if (transcript.ticket_user_id) {
+          const id = String(transcript.ticket_user_id);
+          metaRows.push(
+            `User <a class="code" href="${discordUserUrl(id)}" target="_blank" rel="noreferrer">&lt;@${escapeHtml(
+              id
+            )}&gt;</a>`
+          );
+        }
+        if (transcript.closed_by_id) {
+          const id = String(transcript.closed_by_id);
+          metaRows.push(
+            `Closed by <a class="code" href="${discordUserUrl(id)}" target="_blank" rel="noreferrer">&lt;@${escapeHtml(
+              id
+            )}&gt;</a>`
+          );
+        }
+
         const html = `
-          <header class="header">
-            <div>
-              <h1>Transcript #${escapeHtml(String(transcript.id))}</h1>
-              <p class="subtitle">${escapeHtml(transcript.channel_name)}</p>
-            </div>
-            <nav class="nav">
-              <a href="/transcripts?key=${keyParam}">← Back to transcripts</a>
-              <a href="/status">Status</a>
-              <a href="/logs">Logs</a>
-            </nav>
-          </header>
+          ${renderAppHeader({
+            active: "transcripts",
+            title: `Transcript #${escapeHtml(String(transcript.id))}`,
+            subtitleHtml: escapeHtml(transcript.channel_name),
+            transcriptsKey: rawKey,
+            extraNavHtml: `<a href="/transcripts?key=${keyParam}">← Back</a>`
+          })}
 
           <div class="card detail-meta">
             <strong>Channel</strong>
-            <div class="meta">${escapeHtml(transcript.channel_name)} · Closed by ${escapeHtml(transcript.closed_by)} · ${new Date(transcript.created_at).toLocaleString("en-GB")}</div>
+            <div class="meta">
+              ${escapeHtml(transcript.channel_name)} · Closed by ${escapeHtml(transcript.closed_by)} · ${new Date(
+          transcript.created_at
+        ).toLocaleString("en-GB")}
+            </div>
+            ${
+              metaRows.length
+                ? `<div class="meta" style="margin-top:.35rem;">${metaRows.join(" · ")}</div>`
+                : ""
+            }
+            ${
+              transcript.ticket_brief_description
+                ? `<div class="meta" style="margin-top:.75rem;"><strong>Brief</strong><div class="meta">${escapeHtml(
+                    String(transcript.ticket_brief_description)
+                  )}</div></div>`
+                : ""
+            }
+            ${
+              transcript.ticket_feds_url
+                ? `<div class="meta" style="margin-top:.5rem;"><strong>Feds URL</strong><div class="meta">${escapeHtml(
+                    String(transcript.ticket_feds_url)
+                  )}</div></div>`
+                : ""
+            }
           </div>
 
           <div class="card" style="padding:0; overflow:hidden;">
@@ -1160,7 +1353,8 @@ async function startBot(): Promise<void> {
         }
       });
 
-      console.log("[client debug]", msg);
+      // Capture in /logs.json without spamming platform stdout logs.
+      console.debug("[client debug]", msg);
     }
   });
 

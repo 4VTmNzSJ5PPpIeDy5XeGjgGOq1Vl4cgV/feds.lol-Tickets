@@ -7,6 +7,12 @@ const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
 
 const OWNER_USER_ID = "261265820678619137";
 const OWNER_PREFIX = "!agent";
+const OWNER_ALLOWED_ROLE_IDS = [
+  "1408259928736399433", // Server Owner
+  "1457448238243254314", // Server Management
+  "1408259929177063456", // Server Team
+  "1408259930267451512" // Server Staff
+] as const;
 
 const dmCooldowns = new Map<string, number>();
 const DM_COOLDOWN_MS = 60 * 1000;
@@ -18,10 +24,16 @@ function isSupportMessage(message: Message): boolean {
 }
 
 async function handleOwnerPrefixCommand(message: Message, client: Client): Promise<boolean> {
-  if (message.author.id !== OWNER_USER_ID) return false;
-
   const content = (message.content || "").trim();
   if (!content.toLowerCase().startsWith(OWNER_PREFIX)) return false;
+
+  const isOwnerUser = message.author.id === OWNER_USER_ID;
+  const hasAllowedRole = OWNER_ALLOWED_ROLE_IDS.some((roleId) =>
+    message.member?.roles?.cache?.has(roleId)
+  );
+
+  // Owner can run anywhere; role-based access is guild-only.
+  if (!isOwnerUser && !hasAllowedRole) return false;
 
   const args = content.slice(OWNER_PREFIX.length).trim().split(/\s+/).filter(Boolean);
   const sub = (args[0] || "").toLowerCase();

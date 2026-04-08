@@ -47,7 +47,8 @@ async function fetchAllMessages(
 const command = {
   data: new SlashCommandBuilder()
     .setName("close")
-    .setDescription("Close the current ticket."),
+    .setDescription("Close the current ticket.")
+    .setDMPermission(false),
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async execute(interaction: any, client: Client) {
@@ -104,7 +105,17 @@ const command = {
       savedTranscript = await db.saveTranscript(
         channel.name,
         user.tag,
-        textTranscript
+        textTranscript,
+        {
+          guildId: guild.id,
+          channelId: channel.id,
+          ticketId: ticket.id,
+          ticketUserId: ticket.user_id,
+          ticketCategoryKey: ticket.category_key,
+          ticketBriefDescription: ticket.brief_description,
+          ticketFedsUrl: ticket.feds_url,
+          closedById: user.id
+        }
       );
 
       const transcriptBaseUrl = process.env.TRANSCRIPT_BASE_URL?.trim();
