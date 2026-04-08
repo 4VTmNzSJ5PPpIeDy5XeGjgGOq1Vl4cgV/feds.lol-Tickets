@@ -70,11 +70,13 @@ const command = {
       });
     }
 
+    // Ack early to avoid "Unknown interaction" on slower DB/REST.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
     const ticket = await db.getTicketByChannel(channel.id);
     if (!ticket || ticket.status !== "open") {
-      return interaction.reply({
-        content: "This command can only be used inside an open ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "This command can only be used inside an open ticket."
       });
     }
 
@@ -82,35 +84,27 @@ const command = {
     const isAdmin = memberObj.permissions.has(PermissionFlagsBits.ManageChannels);
     const isSupport = isSupportMember(memberObj);
     if (!isSupport && !isAdmin) {
-      return interaction.reply({
-        content: "Only staff can move ticket categories.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "Only staff can move ticket categories." });
     }
 
     const categoryKey = interaction.options.getString("category", true) as CategoryKey;
     const meta = CATEGORY_META[categoryKey];
     if (!meta) {
-      return interaction.reply({
-        content: "Unknown category.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "Unknown category." });
     }
 
     if (ticket.category_key === categoryKey) {
-      return interaction.reply({
-        content: `This ticket is already in **${meta.label}**.`,
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: `This ticket is already in **${meta.label}**.`
       });
     }
 
     const parentId = process.env[meta.categoryEnv]?.trim();
     if (!parentId) {
-      return interaction.reply({
+      return interaction.editReply({
         content:
           `Category channel is not configured for **${meta.label}**. ` +
-          `Set \`${meta.categoryEnv}\` in your environment and redeploy.`,
-        flags: MessageFlags.Ephemeral
+          `Set \`${meta.categoryEnv}\` in your environment and redeploy.`
       });
     }
 
@@ -121,9 +115,8 @@ const command = {
       await (channel as any).setParent(parentId, { lockPermissions: false });
     } catch (e) {
       console.error("[movecategory] setParent failed:", e);
-      return interaction.reply({
-        content: "Failed to move the channel category. (Check bot permissions.)",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "Failed to move the channel category. (Check bot permissions.)"
       });
     }
 
@@ -160,10 +153,7 @@ const command = {
       // ignore
     }
 
-    return interaction.reply({
-      content: `Moved ticket to **${meta.label}**.`,
-      flags: MessageFlags.Ephemeral
-    });
+    return interaction.editReply({ content: `Moved ticket to **${meta.label}**.` });
   }
 };
 
