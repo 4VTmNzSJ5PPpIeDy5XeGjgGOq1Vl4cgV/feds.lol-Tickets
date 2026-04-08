@@ -32,7 +32,6 @@ const command = {
     .setName("rename")
     .setDescription("Rename the current ticket channel.")
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
     .addStringOption((opt) =>
       opt
         .setName("name")

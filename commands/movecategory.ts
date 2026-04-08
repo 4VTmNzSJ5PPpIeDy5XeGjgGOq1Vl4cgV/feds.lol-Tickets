@@ -136,11 +136,10 @@ const command = {
         console.error("[movecategory] rollback setParent failed:", rollbackErr);
       }
 
-      return interaction.reply({
+      return interaction.editReply({
         content:
           "Moved the channel category, but failed to update the ticket record. " +
-          "I reverted the channel move to keep things consistent. Please try again.",
-        flags: MessageFlags.Ephemeral
+          "I reverted the channel move to keep things consistent. Please try again."
       });
     }
 
