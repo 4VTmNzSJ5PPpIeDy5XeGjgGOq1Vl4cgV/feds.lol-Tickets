@@ -651,18 +651,19 @@ function renderLogsPage(): string {
 function shouldLogRequest(req: http.IncomingMessage, pathname: string): boolean {
   if (req.method === "HEAD") return false;
 
-      const ignored = new Set<string>([
+  const ignored = new Set<string>([
     "/",
     "/favicon.ico",
     "/healthz",
     "/status",
     "/logs",
     "/status.json",
-    "/transcripts/*",
     "/logs.json"
   ]);
 
   if (ignored.has(pathname)) return false;
+  // Ignore transcript routes (they can be noisy during browsing/search).
+  if (pathname === "/transcripts" || pathname.startsWith("/transcripts/")) return false;
 
   return true;
 }

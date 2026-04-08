@@ -581,8 +581,8 @@ const event = {
         });
       }
 
-      // Acknowledge quickly to avoid "Interaction failed" on slow API.
-      await button.deferReply({ flags: MessageFlags.Ephemeral });
+      // Acknowledge quickly; we'll post a visible message in-channel.
+      await button.deferUpdate();
 
       claimedTickets.set(channel.id, user.tag);
 
@@ -615,7 +615,10 @@ const event = {
         });
       }
 
-      return button.editReply({ content: `Ticket claimed by ${user}.` });
+      await channel
+        .send({ content: `Ticket claimed by ${user}.` })
+        .catch((e) => console.error("[tickets] claim channel.send failed:", e));
+      return;
     }
 
     // Escalate ticket
@@ -654,8 +657,8 @@ const event = {
         });
       }
 
-      // Acknowledge quickly to avoid "Interaction failed" on slow API.
-      await button.deferReply({ flags: MessageFlags.Ephemeral });
+      // Acknowledge quickly; we'll post a visible message in-channel.
+      await button.deferUpdate();
 
       escalatedTickets.add(channel.id);
 
@@ -690,9 +693,10 @@ const event = {
         });
       }
 
-      return button.editReply({
-        content: `Ticket escalated by ${user}. <@&${escalateRoleId}>`
-      });
+      await channel
+        .send({ content: `Ticket escalated by ${user}. <@&${escalateRoleId}>` })
+        .catch((e) => console.error("[tickets] escalate channel.send failed:", e));
+      return;
     }
 
     // Close ticket prompt
@@ -837,13 +841,10 @@ const event = {
             const logEmbed = new EmbedBuilder()
               .setTitle("Transcript Saved")
               .addFields(
+                { name: "Ticket ID", value: `#${ticket.id}`, inline: true },
+                { name: "User", value: `<@${ticket.user_id}>`, inline: true },
                 { name: "Channel", value: channel.name, inline: true },
-                { name: "Saved By", value: user.tag, inline: true },
-                {
-                  name: "Ticket Owner",
-                  value: `<@${ticket.user_id}>`,
-                  inline: true
-                },
+                { name: "Saved By", value: `${user} (${user.tag})`, inline: true },
                 { name: "Category", value: ticket.category_key, inline: true },
                 {
                   name: "Brief Description",
