@@ -16,6 +16,23 @@ const OWNER_ALLOWED_ROLE_IDS = [
 
 const dmCooldowns = new Map<string, number>();
 const DM_COOLDOWN_MS = 60 * 1000;
+const dmDisabledUsers = new Map<string, { at: number; reason: string }>();
+
+function shouldDisableDmForError(err: unknown): { disable: boolean; reason: string } {
+  const anyErr = err as any;
+  const code = anyErr?.code;
+  const message = String(anyErr?.message || err || "").toLowerCase();
+
+  // Common Discord API errors when the bot cannot DM the user.
+  // - 50007: Cannot send messages to this user
+  // - "no mutual guilds": user left guild / can't be DMed
+  if (code === 50007) return { disable: true, reason: "DMs blocked (50007)" };
+  if (message.includes("no mutual guilds")) return { disable: true, reason: "No mutual guilds" };
+  if (message.includes("cannot send messages to this user"))
+    return { disable: true, reason: "DMs blocked" };
+
+  return { disable: false, reason: "Unknown DM failure" };
+}
 
 function isSupportMessage(message: Message): boolean {
   return SUPPORT_ROLE_IDS.some((roleId) =>
@@ -94,6 +111,7 @@ const event = {
       const now = Date.now();
 
       if (now - last < DM_COOLDOWN_MS) return;
+      if (dmDisabledUsers.has(ticket.user_id)) return;
 
       const ticketOwner = await client.users.fetch(ticket.user_id).catch(() => null);
       if (!ticketOwner) return;
@@ -111,11 +129,23 @@ const event = {
             `**${message.author.tag}:** ${preview}`
         );
       } catch (e) {
-        console.warn(
-          "[messageCreate] Staff reply DM failed:",
-          ticket.user_id,
-          (e as Error)?.message || e
-        );
+        const dmDecision = shouldDisableDmForError(e);
+        if (dmDecision.disable) {
+          if (!dmDisabledUsers.has(ticket.user_id)) {
+            dmDisabledUsers.set(ticket.user_id, { at: now, reason: dmDecision.reason });
+            console.log(
+              "[messageCreate] Disabling staff-reply DMs for user:",
+              ticket.user_id,
+              dmDecision.reason
+            );
+          }
+        } else {
+          console.warn(
+            "[messageCreate] Staff reply DM failed:",
+            ticket.user_id,
+            (e as Error)?.message || e
+          );
+        }
         dmCooldowns.set(cooldownKey, now);
         return;
       }
