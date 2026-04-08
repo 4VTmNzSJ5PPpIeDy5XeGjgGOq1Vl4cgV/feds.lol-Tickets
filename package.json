@@ -12,6 +12,7 @@
     "dev": "ts-node index.ts",
     "deploy": "npm run deploy:guild",
     "deploy:guild": "ts-node deploy-commands.ts",
+    "restore:gist": "ts-node scripts/restore-gist.ts",
     "postinstall": "npm run build"
   },
   "dependencies": {

@@ -34,6 +34,7 @@ npm start
 | **dev** | `npm run dev` | Runs `ts-node index.ts` for local development. |
 | **deploy** | `npm run deploy` | Registers slash commands in your guild (same as `deploy:guild`). |
 | **deploy:guild** | `npm run deploy:guild` | Runs `ts-node deploy-commands.ts` to register `/panel` and `/close`. |
+| **restore:gist** | `npm run restore:gist -- <gist-id-or-url>` | Restores tickets/transcripts from the latest `backup.json` in the gist into your current `DATABASE_URL`. |
 
 `postinstall` runs `npm run build`, so Render builds TypeScript after `npm install`.
 
@@ -159,6 +160,7 @@ Tables are created automatically on first run via `database.init()`.
 - **Database connection fails (ENOTFOUND):** Use the full **External** database URL from Render (host like `xxx.oregon-postgres.render.com`), not the internal hostname.
 - **Categories show MISSING:** Set each `CATEGORY_*` in `.env` to the Discord **category** channel ID (right‑click category → Copy ID). Restart the bot.
 - **Slash commands missing:** Run `npm run deploy` (or `npm run deploy:guild`) and wait a few minutes for Discord to update.
+- **DB expired / reset:** Create a new Postgres DB, update `DATABASE_URL`, then run `npm run restore:gist -- <gist-id-or-url>` to re-import from gist backup.
 - **Build fails:** Ensure Node 18+ and run `npm install` then `npm run build`.
 
 ---
