@@ -65,18 +65,15 @@ const command = {
       });
     }
 
-    // Grant the added member access similar to the ticket opener.
-    const allow = [
-      PermissionFlagsBits.ViewChannel,
-      PermissionFlagsBits.SendMessages,
-      PermissionFlagsBits.ReadMessageHistory,
-      PermissionFlagsBits.AttachFiles,
-      PermissionFlagsBits.EmbedLinks
-    ] as const;
-
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (channel as any).permissionOverwrites.edit(targetUser.id, { allow });
+      await (channel as any).permissionOverwrites.edit(targetUser.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+        AttachFiles: true,
+        EmbedLinks: true
+      });
     } catch (e) {
       console.error("[adduser] permissionOverwrites.edit failed:", e);
       return interaction.reply({
