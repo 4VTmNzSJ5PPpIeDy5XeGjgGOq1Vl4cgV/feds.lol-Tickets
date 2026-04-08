@@ -248,6 +248,7 @@ const event = {
             gistIdOrUrl,
             maxRevisionAttempts: 25,
             allowEmpty: arg.toLowerCase().includes("--allow-empty"),
+            requireTranscripts: !arg.toLowerCase().includes("--allow-zero-transcripts"),
             onProgress: (p) => {
               const now = Date.now();
               if (now - lastProgress < 4000) return;

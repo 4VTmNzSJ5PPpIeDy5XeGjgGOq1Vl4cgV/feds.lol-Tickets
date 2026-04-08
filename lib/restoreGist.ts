@@ -81,13 +81,21 @@ async function fetchText(url: string): Promise<string> {
   return await res.text();
 }
 
-function parseBackupPayloadOrNull(text: string, opts?: { allowEmpty?: boolean }): BackupPayload | null {
+function parseBackupPayloadOrNull(
+  text: string,
+  opts?: { allowEmpty?: boolean; requireTranscripts?: boolean }
+): BackupPayload | null {
   try {
     const payload = JSON.parse(text) as BackupPayload;
     if (payload?.version !== 1 || payload?.service !== "feds-agent") return null;
     const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
     const transcripts = Array.isArray(payload.transcripts) ? payload.transcripts : [];
+    const requireTranscripts = opts?.requireTranscripts !== false;
+    const hasTranscripts = transcripts.length > 0;
     const nonEmpty = tickets.length > 0 || transcripts.length > 0;
+
+    // Default behavior: reject snapshots with zero transcripts (your "empty newer revision" case).
+    if (!opts?.allowEmpty && requireTranscripts && !hasTranscripts) return null;
     if (!opts?.allowEmpty && !nonEmpty) return null;
     return payload;
   } catch {
@@ -112,6 +120,7 @@ export async function restoreFromGist(opts: {
   gistIdOrUrl: string;
   onProgress?: (p: RestoreProgress) => void;
   allowEmpty?: boolean;
+  requireTranscripts?: boolean;
   maxRevisionAttempts?: number;
 }): Promise<{ tickets: number; transcripts: number; createdAt: string }> {
   const gistId = parseGistId(opts.gistIdOrUrl);
@@ -119,6 +128,7 @@ export async function restoreFromGist(opts: {
   const urlDetails = parseGistUrlDetails(opts.gistIdOrUrl);
   const preferredFilename = urlDetails.filename;
   const allowEmpty = Boolean(opts.allowEmpty);
+  const requireTranscripts = opts.requireTranscripts !== false;
   const maxRevisionAttempts = Math.max(1, Math.min(50, Number(opts.maxRevisionAttempts || 25)));
 
   opts.onProgress?.({ stage: "fetch_gist", gistId });
@@ -133,7 +143,7 @@ export async function restoreFromGist(opts: {
 
   opts.onProgress?.({ stage: "download_backup", rawUrl: picked.rawUrl });
   const latestText = await fetchText(picked.rawUrl);
-  payload = parseBackupPayloadOrNull(latestText, { allowEmpty });
+  payload = parseBackupPayloadOrNull(latestText, { allowEmpty, requireTranscripts });
 
   // If caller didn't request an explicit revision and latest is empty/invalid, walk backwards.
   if (!payload && !urlDetails.revision) {
@@ -156,7 +166,7 @@ export async function restoreFromGist(opts: {
 
       lastRawUrl = pickedRev.rawUrl;
       const txt = await fetchText(pickedRev.rawUrl);
-      const parsed = parseBackupPayloadOrNull(txt, { allowEmpty });
+      const parsed = parseBackupPayloadOrNull(txt, { allowEmpty, requireTranscripts });
       if (parsed) {
         payload = parsed;
         break;
@@ -167,7 +177,7 @@ export async function restoreFromGist(opts: {
   if (!payload) {
     if (!allowEmpty) {
       throw new Error(
-        "[restore] No non-empty feds-agent backup payload found in gist history. If you truly want to restore an empty backup, run restore with allowEmpty."
+        "[restore] No usable feds-agent backup payload found in gist history. If you truly want to restore an empty/0-transcript backup, run restore with allowEmpty or disable transcript requirement."
       );
     }
     // allowEmpty=true but still couldn't parse any valid payload
