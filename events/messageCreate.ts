@@ -71,7 +71,8 @@ function loadGuildCommandJsons(): unknown[] {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const path = require("path") as typeof import("path");
 
-  const commandsPath = path.join(__dirname, "commands");
+  // messageCreate runs from dist/events, commands live in dist/commands.
+  const commandsPath = path.join(__dirname, "..", "commands");
   if (!fs.existsSync(commandsPath)) return [];
 
   const files = fs.readdirSync(commandsPath).filter((f) => f.endsWith(".js"));
