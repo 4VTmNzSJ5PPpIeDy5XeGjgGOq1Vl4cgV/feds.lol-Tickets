@@ -37,11 +37,13 @@ const command = {
       });
     }
 
+    // Ack early to avoid "Unknown interaction" on slower DB/REST.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
     const ticket = await db.getTicketByChannel(channel.id);
     if (!ticket || ticket.status !== "open") {
-      return interaction.reply({
-        content: "This command can only be used inside an open ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "This command can only be used inside an open ticket."
       });
     }
 
@@ -50,26 +52,19 @@ const command = {
     const isSupport = isSupportMember(memberObj);
 
     if (!isSupport && !isAdmin) {
-      return interaction.reply({
-        content: "Only staff can remove users from tickets.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "Only staff can remove users from tickets." });
     }
 
     const targetUser = interaction.options.getUser("user", true);
 
     if (targetUser.id === ticket.user_id) {
-      return interaction.reply({
-        content: "You can't remove the ticket owner from their own ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "You can't remove the ticket owner from their own ticket."
       });
     }
 
     if (targetUser.id === guild.members.me?.id) {
-      return interaction.reply({
-        content: "You can't remove the bot from the ticket channel.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "You can't remove the bot from the ticket channel." });
     }
 
     // Remove explicit per-user overwrite (returns them to default perms: everyone denied).
@@ -78,10 +73,9 @@ const command = {
       await (channel as any).permissionOverwrites.delete(targetUser.id);
     } catch (e) {
       console.error("[removeuser] permissionOverwrites.delete failed:", e);
-      return interaction.reply({
+      return interaction.editReply({
         content:
-          "Failed to remove that user. (Check bot permissions and role hierarchy.)",
-        flags: MessageFlags.Ephemeral
+          "Failed to remove that user. (Check bot permissions and role hierarchy.)"
       });
     }
 
@@ -95,10 +89,7 @@ const command = {
       // ignore message failure; permissions were still updated
     }
 
-    return interaction.reply({
-      content: `Removed ${targetUser} from this ticket.`,
-      flags: MessageFlags.Ephemeral
-    });
+    return interaction.editReply({ content: `Removed ${targetUser} from this ticket.` });
   }
 };
 

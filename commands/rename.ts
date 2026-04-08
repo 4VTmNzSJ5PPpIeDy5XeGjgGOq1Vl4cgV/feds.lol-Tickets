@@ -1,4 +1,5 @@
 import {
+  ChannelType,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -50,11 +51,22 @@ const command = {
       });
     }
 
+    // Extra safety: never rename non-ticket channels (including threads).
+    // Tickets are created as GuildText channels, and must have an open ticket record in DB.
+    if ((channel as any).type !== ChannelType.GuildText) {
+      return interaction.reply({
+        content: "This command can only be used inside a ticket channel.",
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    // Ack early to avoid "Unknown interaction" on slower DB/REST.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
     const ticket = await db.getTicketByChannel(channel.id);
     if (!ticket || ticket.status !== "open") {
-      return interaction.reply({
-        content: "This command can only be used inside an open ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "This command can only be used inside an open ticket."
       });
     }
 
@@ -63,27 +75,20 @@ const command = {
     const isSupport = isSupportMember(memberObj);
 
     if (!isSupport && !isAdmin) {
-      return interaction.reply({
-        content: "Only staff can rename tickets.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "Only staff can rename tickets." });
     }
 
     const requested = interaction.options.getString("name", true);
     const newName = slugifyChannelName(requested);
 
     if (!newName) {
-      return interaction.reply({
-        content: "Please provide a valid name (letters/numbers/hyphens).",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "Please provide a valid name (letters/numbers/hyphens)."
       });
     }
 
     if ((channel as any).name === newName) {
-      return interaction.reply({
-        content: "That’s already the current channel name.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "That’s already the current channel name." });
     }
 
     try {
@@ -91,9 +96,8 @@ const command = {
       await (channel as any).setName(newName, `Renamed by ${actor.tag}`);
     } catch (e) {
       console.error("[rename] setName failed:", e);
-      return interaction.reply({
-        content: "Failed to rename the channel. (Check bot permissions.)",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "Failed to rename the channel. (Check bot permissions.)"
       });
     }
 
@@ -107,10 +111,7 @@ const command = {
       // ignore
     }
 
-    return interaction.reply({
-      content: `Renamed channel to **${newName}**.`,
-      flags: MessageFlags.Ephemeral
-    });
+    return interaction.editReply({ content: `Renamed channel to **${newName}**.` });
   }
 };
 

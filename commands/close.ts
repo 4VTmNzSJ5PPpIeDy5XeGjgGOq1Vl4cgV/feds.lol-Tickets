@@ -56,12 +56,14 @@ const command = {
     if (!channel || !guild || !member) return;
     if (!channel.isTextBased() || channel.isDMBased()) return;
 
+    // Ack early to avoid "Unknown interaction" on slower DB/REST.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
     const ticket = await db.getTicketByChannel(channel.id);
 
     if (!ticket || ticket.status !== "open") {
-      return interaction.reply({
-        content: "This command can only be used inside an open ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "This command can only be used inside an open ticket."
       });
     }
 
@@ -72,9 +74,8 @@ const command = {
     const isOwner = user.id === ticket.user_id;
 
     if (!isOwner && !isSupport && !isAdmin) {
-      return interaction.reply({
-        content: "You don't have permission to close this ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "You don't have permission to close this ticket."
       });
     }
 
@@ -86,7 +87,9 @@ const command = {
       .setColor(0x4240ae)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [closeEmbed] });
+    // Visible message in the ticket for everyone.
+    await channel.send({ embeds: [closeEmbed] }).catch(() => {});
+    await interaction.editReply({ content: "Closing ticket (transcript will be saved)..." });
 
     let savedTranscript: Awaited<ReturnType<typeof db.saveTranscript>> | null = null;
     let renderTranscriptUrl: string | null = null;

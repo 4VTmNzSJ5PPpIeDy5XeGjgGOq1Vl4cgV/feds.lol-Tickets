@@ -37,11 +37,13 @@ const command = {
       });
     }
 
+    // Ack early to avoid "Unknown interaction" on slower DB/REST.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
     const ticket = await db.getTicketByChannel(channel.id);
     if (!ticket || ticket.status !== "open") {
-      return interaction.reply({
-        content: "This command can only be used inside an open ticket.",
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: "This command can only be used inside an open ticket."
       });
     }
 
@@ -50,19 +52,13 @@ const command = {
     const isSupport = isSupportMember(memberObj);
 
     if (!isSupport && !isAdmin) {
-      return interaction.reply({
-        content: "Only staff can add users to tickets.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "Only staff can add users to tickets." });
     }
 
     const targetUser = interaction.options.getUser("user", true);
     const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
     if (!targetMember) {
-      return interaction.reply({
-        content: "That user is not a member of this server.",
-        flags: MessageFlags.Ephemeral
-      });
+      return interaction.editReply({ content: "That user is not a member of this server." });
     }
 
     try {
@@ -76,10 +72,9 @@ const command = {
       });
     } catch (e) {
       console.error("[adduser] permissionOverwrites.edit failed:", e);
-      return interaction.reply({
+      return interaction.editReply({
         content:
-          "Failed to add that user. (Check bot permissions and role hierarchy.)",
-        flags: MessageFlags.Ephemeral
+          "Failed to add that user. (Check bot permissions and role hierarchy.)"
       });
     }
 
@@ -93,10 +88,7 @@ const command = {
       // ignore message failure; permissions were still updated
     }
 
-    return interaction.reply({
-      content: `Added ${targetUser} to this ticket.`,
-      flags: MessageFlags.Ephemeral
-    });
+    return interaction.editReply({ content: `Added ${targetUser} to this ticket.` });
   }
 };
 
