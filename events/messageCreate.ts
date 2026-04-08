@@ -7,11 +7,17 @@ const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
 
 const OWNER_USER_ID = "261265820678619137";
 const OWNER_PREFIX = "!agent";
+const SYNC_PREFIX = "!sync";
 const OWNER_ALLOWED_ROLE_IDS = [
   "1408259928736399433", // Server Owner
   "1457448238243254314", // Server Management
   "1408259929177063456", // Server Team
   "1408259930267451512" // Server Staff
+] as const;
+
+const SYNC_ALLOWED_ROLE_IDS = [
+  "1408259928736399433", // Server Owner
+  "1457448238243254314" // Server Management
 ] as const;
 
 const dmCooldowns = new Map<string, number>();
@@ -40,17 +46,56 @@ function isSupportMessage(message: Message): boolean {
   );
 }
 
-async function handleOwnerPrefixCommand(message: Message, client: Client): Promise<boolean> {
-  const content = (message.content || "").trim();
-  if (!content.toLowerCase().startsWith(OWNER_PREFIX)) return false;
-
+function passesOwnerGate(message: Message): boolean {
   const isOwnerUser = message.author.id === OWNER_USER_ID;
   const hasAllowedRole = OWNER_ALLOWED_ROLE_IDS.some((roleId) =>
     message.member?.roles?.cache?.has(roleId)
   );
 
   // Owner can run anywhere; role-based access is guild-only.
-  if (!isOwnerUser && !hasAllowedRole) return false;
+  return Boolean(isOwnerUser || hasAllowedRole);
+}
+
+function passesSyncGate(message: Message): boolean {
+  const isOwnerUser = message.author.id === OWNER_USER_ID;
+  const hasAllowedRole = SYNC_ALLOWED_ROLE_IDS.some((roleId) =>
+    message.member?.roles?.cache?.has(roleId)
+  );
+  return Boolean(isOwnerUser || hasAllowedRole);
+}
+
+function loadGuildCommandJsons(): unknown[] {
+  // Load .js command modules from the built dist folder at runtime.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require("fs") as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require("path") as typeof import("path");
+
+  const commandsPath = path.join(__dirname, "commands");
+  if (!fs.existsSync(commandsPath)) return [];
+
+  const files = fs.readdirSync(commandsPath).filter((f) => f.endsWith(".js"));
+  const out: unknown[] = [];
+
+  for (const file of files) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const cmd = require(path.join(commandsPath, file));
+      if (!cmd?.data?.toJSON) continue;
+      out.push(cmd.data.toJSON());
+    } catch {
+      // ignore individual command load errors
+    }
+  }
+
+  return out;
+}
+
+async function handleOwnerPrefixCommand(message: Message, client: Client): Promise<boolean> {
+  const content = (message.content || "").trim();
+  if (!content.toLowerCase().startsWith(OWNER_PREFIX)) return false;
+
+  if (!passesOwnerGate(message)) return false;
 
   const args = content.slice(OWNER_PREFIX.length).trim().split(/\s+/).filter(Boolean);
   const sub = (args[0] || "").toLowerCase();
@@ -80,6 +125,49 @@ async function handleOwnerPrefixCommand(message: Message, client: Client): Promi
   return true;
 }
 
+async function handleSyncPrefixCommand(message: Message, client: Client): Promise<boolean> {
+  const content = (message.content || "").trim();
+  if (!content.toLowerCase().startsWith(SYNC_PREFIX)) return false;
+  if (!passesSyncGate(message)) return false;
+
+  if (!message.guild) {
+    await message.reply("`!sync` can only be used inside the server (not DMs).");
+    return true;
+  }
+
+  const targetGuildId = process.env.GUILD_ID?.trim() || message.guild.id;
+
+  await message.reply("Syncing slash commands for this guild...").catch(() => {});
+
+  const jsons = loadGuildCommandJsons();
+  if (!jsons.length) {
+    await message
+      .reply("No built command modules found. Make sure the bot is running compiled `dist/` output.")
+      .catch(() => {});
+    return true;
+  }
+
+  try {
+    const guild =
+      client.guilds.cache.get(targetGuildId) ??
+      (await client.guilds.fetch(targetGuildId).catch(() => null));
+    if (!guild) {
+      await message.reply(`Could not fetch guild \`${targetGuildId}\`.`).catch(() => {});
+      return true;
+    }
+
+    // Overwrites guild commands (clears old + applies new).
+    await guild.commands.set(jsons as any);
+    await message.reply(`✅ Synced ${jsons.length} guild command(s).`).catch(() => {});
+  } catch (e) {
+    await message
+      .reply(`Sync failed: ${(e as Error)?.message || String(e)}`)
+      .catch(() => {});
+  }
+
+  return true;
+}
+
 const event = {
   name: "messageCreate",
 
@@ -89,6 +177,7 @@ const event = {
 
       // Owner-only prefix commands (no env, no slash commands).
       if (await handleOwnerPrefixCommand(message, client)) return;
+      if (await handleSyncPrefixCommand(message, client)) return;
 
       // Remaining logic is ticket-only and guild-only.
       if (!message.guild) return;
