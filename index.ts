@@ -501,18 +501,36 @@ input[type="text"]:focus {
   background: var(--bg-elevated);
   border-color: var(--accent);
 }
-.transcript-card strong { font-size: 1rem; }
+.transcript-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.transcript-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.transcript-sub {
+  margin-top: .35rem;
+  font-size: .8125rem;
+  color: var(--text-muted);
+}
 .transcript-card .meta {
   margin-top: .35rem;
   font-size: .8125rem;
   color: var(--text-muted);
 }
 .transcript-card .open-link {
-  display: inline-block;
-  margin-top: .75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
   font-size: .875rem;
   font-weight: 500;
   color: var(--accent);
+  white-space: nowrap;
 }
 .empty-state {
   text-align: center;
@@ -920,21 +938,29 @@ const server = http.createServer(async (req, res) => {
                 .map(
                   (row) => `
             <a href="/transcripts/${row.id}?key=${keyParam}" class="transcript-card">
-              <strong>#${row.id}${row.ticket_id ? ` · Ticket #${escapeHtml(String(row.ticket_id))}` : ""} ${escapeHtml(
-                    row.channel_name
-                  )}</strong>
+              <div class="transcript-head">
+                <div class="transcript-title">${escapeHtml(String(row.channel_name || "ticket"))}</div>
+                <span class="open-link">Open →</span>
+              </div>
+              <div class="transcript-sub">
+                Transcript <span class="code">#${escapeHtml(String(row.id))}</span>
+                ${
+                  row.ticket_id
+                    ? ` · Ticket <span class="code">#${escapeHtml(String(row.ticket_id))}</span>`
+                    : ""
+                }
+              </div>
               <div class="meta">
                 ${
                   row.ticket_user_id
                     ? `User <a class="code" href="${discordUserUrl(
                         String(row.ticket_user_id)
-                      )}" target="_blank" rel="noreferrer">${escapeHtml(
+                      )}" target="_blank" rel="noreferrer">&lt;@${escapeHtml(
                         String(row.ticket_user_id)
-                      )}</a> · `
+                      )}&gt;</a> · `
                     : ""
                 }Closed by ${escapeHtml(row.closed_by)} · ${new Date(row.created_at).toLocaleString("en-GB")}
               </div>
-              <span class="open-link">Open transcript →</span>
             </a>
           `
                 )
