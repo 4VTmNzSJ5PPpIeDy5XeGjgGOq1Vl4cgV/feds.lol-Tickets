@@ -240,9 +240,11 @@ const event = {
             return;
           }
 
-          await message.reply("Starting DB restore from gist... (this may take a bit)");
+          const statusMsg = await message.reply(
+            "Starting DB restore from gist... (this may take a bit)"
+          );
 
-          let lastProgress = 0;
+          let lastProgress = Date.now();
           const r = await restoreFromGist({
             databaseUrl,
             gistIdOrUrl,
@@ -253,29 +255,32 @@ const event = {
               const now = Date.now();
               if (now - lastProgress < 4000) return;
               lastProgress = now;
-              if (p.stage === "fetch_gist") void message.reply(`Fetching gist \`${p.gistId}\`...`).catch(() => {});
+              if (p.stage === "fetch_gist")
+                void statusMsg.edit(`Fetching gist \`${p.gistId}\`...`).catch(() => {});
               if (p.stage === "walk_revisions")
-                void message
-                  .reply(`Latest backup looks empty; checking older revisions... (${p.attempted}/${p.max})`)
-                  .catch(() => {});
-              if (p.stage === "parse_backup")
-                void message
-                  .reply(
-                    `Backup \`${p.createdAt}\` — tickets=${p.tickets} transcripts=${p.transcripts}`
+                void statusMsg
+                  .edit(
+                    `Latest backup looks empty; checking older revisions... (${p.attempted}/${p.max})`
                   )
                   .catch(() => {});
+              if (p.stage === "parse_backup")
+                void statusMsg
+                  .edit(`Backup \`${p.createdAt}\` — tickets=${p.tickets} transcripts=${p.transcripts}`)
+                  .catch(() => {});
               if (p.stage === "restore_tickets")
-                void message
-                  .reply(`Restoring tickets... ${p.current}/${p.total}`)
+                void statusMsg
+                  .edit(`Restoring tickets... ${p.current}/${p.total}`)
                   .catch(() => {});
               if (p.stage === "restore_transcripts")
-                void message
-                  .reply(`Restoring transcripts... ${p.current}/${p.total}`)
+                void statusMsg
+                  .edit(`Restoring transcripts... ${p.current}/${p.total}`)
                   .catch(() => {});
             }
           });
 
-          await message.reply(`✅ Restore complete. tickets=${r.tickets} transcripts=${r.transcripts}`);
+          await statusMsg
+            .edit(`✅ Restore complete. tickets=${r.tickets} transcripts=${r.transcripts}`)
+            .catch(() => {});
         } catch (e) {
           console.error("[restore] !restore failed:", e);
           await message
