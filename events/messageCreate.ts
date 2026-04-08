@@ -246,11 +246,17 @@ const event = {
           const r = await restoreFromGist({
             databaseUrl,
             gistIdOrUrl,
+            maxRevisionAttempts: 25,
+            allowEmpty: arg.toLowerCase().includes("--allow-empty"),
             onProgress: (p) => {
               const now = Date.now();
               if (now - lastProgress < 4000) return;
               lastProgress = now;
               if (p.stage === "fetch_gist") void message.reply(`Fetching gist \`${p.gistId}\`...`).catch(() => {});
+              if (p.stage === "walk_revisions")
+                void message
+                  .reply(`Latest backup looks empty; checking older revisions... (${p.attempted}/${p.max})`)
+                  .catch(() => {});
               if (p.stage === "parse_backup")
                 void message
                   .reply(

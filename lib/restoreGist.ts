@@ -11,6 +11,7 @@ export type BackupPayload = {
 export type RestoreProgress =
   | { stage: "fetch_gist"; gistId: string }
   | { stage: "download_backup"; rawUrl: string }
+  | { stage: "walk_revisions"; attempted: number; max: number }
   | { stage: "parse_backup"; createdAt: string; tickets: number; transcripts: number }
   | { stage: "begin_db" }
   | { stage: "restore_tickets"; current: number; total: number }
@@ -80,34 +81,97 @@ async function fetchText(url: string): Promise<string> {
   return await res.text();
 }
 
-export async function restoreFromGist(opts: {
-  databaseUrl: string;
-  gistIdOrUrl: string;
-  onProgress?: (p: RestoreProgress) => void;
-}): Promise<{ tickets: number; transcripts: number; createdAt: string }> {
-  const gistId = parseGistId(opts.gistIdOrUrl);
-  if (!gistId) throw new Error("[restore] Missing gist id/url");
-  const urlDetails = parseGistUrlDetails(opts.gistIdOrUrl);
-  const preferredFilename = urlDetails.filename;
+function parseBackupPayloadOrNull(text: string, opts?: { allowEmpty?: boolean }): BackupPayload | null {
+  try {
+    const payload = JSON.parse(text) as BackupPayload;
+    if (payload?.version !== 1 || payload?.service !== "feds-agent") return null;
+    const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
+    const transcripts = Array.isArray(payload.transcripts) ? payload.transcripts : [];
+    const nonEmpty = tickets.length > 0 || transcripts.length > 0;
+    if (!opts?.allowEmpty && !nonEmpty) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
 
-  opts.onProgress?.({ stage: "fetch_gist", gistId });
-  const gist = urlDetails.revision
-    ? await fetchJson(`https://api.github.com/gists/${gistId}/${urlDetails.revision}`)
-    : await fetchJson(`https://api.github.com/gists/${gistId}`);
+function pickGistFile(gist: any, preferredFilename: string | null): { rawUrl: string; filename: string } | null {
   const files = gist?.files || {};
   const file =
     (preferredFilename ? files?.[preferredFilename] : null) ||
     files?.["backup.json"] ||
     Object.values(files)?.[0];
   const rawUrl = file?.raw_url as string | undefined;
-  if (!rawUrl) throw new Error("[restore] Could not find backup file raw_url in gist.");
+  const filename = (file?.filename as string | undefined) || preferredFilename || "backup.json";
+  if (!rawUrl) return null;
+  return { rawUrl, filename };
+}
 
-  opts.onProgress?.({ stage: "download_backup", rawUrl });
-  const text = await fetchText(rawUrl);
-  const payload = JSON.parse(text) as BackupPayload;
+export async function restoreFromGist(opts: {
+  databaseUrl: string;
+  gistIdOrUrl: string;
+  onProgress?: (p: RestoreProgress) => void;
+  allowEmpty?: boolean;
+  maxRevisionAttempts?: number;
+}): Promise<{ tickets: number; transcripts: number; createdAt: string }> {
+  const gistId = parseGistId(opts.gistIdOrUrl);
+  if (!gistId) throw new Error("[restore] Missing gist id/url");
+  const urlDetails = parseGistUrlDetails(opts.gistIdOrUrl);
+  const preferredFilename = urlDetails.filename;
+  const allowEmpty = Boolean(opts.allowEmpty);
+  const maxRevisionAttempts = Math.max(1, Math.min(50, Number(opts.maxRevisionAttempts || 25)));
 
-  if (payload?.version !== 1 || payload?.service !== "feds-agent") {
-    throw new Error("[restore] backup.json is not a supported feds-agent backup payload.");
+  opts.onProgress?.({ stage: "fetch_gist", gistId });
+  const gist = urlDetails.revision
+    ? await fetchJson(`https://api.github.com/gists/${gistId}/${urlDetails.revision}`)
+    : await fetchJson(`https://api.github.com/gists/${gistId}`);
+  const picked = pickGistFile(gist, preferredFilename);
+  if (!picked) throw new Error("[restore] Could not find backup file raw_url in gist.");
+
+  let payload: BackupPayload | null = null;
+  let lastRawUrl = picked.rawUrl;
+
+  opts.onProgress?.({ stage: "download_backup", rawUrl: picked.rawUrl });
+  const latestText = await fetchText(picked.rawUrl);
+  payload = parseBackupPayloadOrNull(latestText, { allowEmpty });
+
+  // If caller didn't request an explicit revision and latest is empty/invalid, walk backwards.
+  if (!payload && !urlDetails.revision) {
+    const history = Array.isArray(gist?.history) ? (gist.history as any[]) : [];
+    const toTry = history
+      .map((h) => String(h?.version || "").trim())
+      .filter((v) => looksLikeGistRevision(v));
+
+    let attempted = 0;
+    for (const version of toTry) {
+      if (attempted >= maxRevisionAttempts) break;
+      attempted++;
+      if (attempted % 3 === 0) {
+        opts.onProgress?.({ stage: "walk_revisions", attempted, max: maxRevisionAttempts });
+      }
+
+      const g = await fetchJson(`https://api.github.com/gists/${gistId}/${version}`);
+      const pickedRev = pickGistFile(g, preferredFilename);
+      if (!pickedRev) continue;
+
+      lastRawUrl = pickedRev.rawUrl;
+      const txt = await fetchText(pickedRev.rawUrl);
+      const parsed = parseBackupPayloadOrNull(txt, { allowEmpty });
+      if (parsed) {
+        payload = parsed;
+        break;
+      }
+    }
+  }
+
+  if (!payload) {
+    if (!allowEmpty) {
+      throw new Error(
+        "[restore] No non-empty feds-agent backup payload found in gist history. If you truly want to restore an empty backup, run restore with allowEmpty."
+      );
+    }
+    // allowEmpty=true but still couldn't parse any valid payload
+    throw new Error("[restore] Could not find a valid feds-agent backup payload in gist history.");
   }
 
   const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
