@@ -18,6 +18,7 @@ import {
 } from "discord.js";
 import * as db from "../database";
 import { scheduleTicketChannelDeletion } from "../lib/deleteTicketChannel";
+import { autoModBlockMessage, userFacingAutoModHelp } from "../lib/automod";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -468,13 +469,22 @@ const event = {
         }
       }
 
-      const ticketChannel = (await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: parentId,
-        permissionOverwrites: overwrites,
-        topic: `Ticket for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`
-      })) as TextChannel;
+      let ticketChannel: TextChannel;
+      try {
+        ticketChannel = (await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          parent: parentId,
+          permissionOverwrites: overwrites,
+          topic: `Ticket for ${user.tag} | Category: ${meta.label} | Feds: ${fedsUrl} | Brief: ${briefDescription}`
+        })) as TextChannel;
+      } catch (e) {
+        const autoMod = autoModBlockMessage(e);
+        if (autoMod) {
+          return interaction.editReply({ content: userFacingAutoModHelp() });
+        }
+        throw e;
+      }
 
       const ticketRecord = await db.createTicket({
         guildId: guild.id,
@@ -543,11 +553,19 @@ const event = {
         ? supportRoleIds.map((id) => `<@&${id}>`).join(" ")
         : undefined;
 
-      await ticketChannel.send({
-        content: mentionContent,
-        embeds: [openEmbed],
-        components: [row]
-      });
+      try {
+        await ticketChannel.send({
+          content: mentionContent,
+          embeds: [openEmbed],
+          components: [row]
+        });
+      } catch (e) {
+        const autoMod = autoModBlockMessage(e);
+        if (autoMod) {
+          return interaction.editReply({ content: userFacingAutoModHelp() });
+        }
+        throw e;
+      }
 
       await sendLog(guild, ticketChannel.name, user, "Opened", meta.label);
 

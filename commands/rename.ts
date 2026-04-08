@@ -7,6 +7,7 @@ import {
   type GuildMember
 } from "discord.js";
 import * as db from "../database";
+import { autoModBlockMessage, userFacingAutoModHelp } from "../lib/automod";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -96,6 +97,9 @@ const command = {
       await (channel as any).setName(newName, `Renamed by ${actor.tag}`);
     } catch (e) {
       console.error("[rename] setName failed:", e);
+      if (autoModBlockMessage(e)) {
+        return interaction.editReply({ content: userFacingAutoModHelp() });
+      }
       return interaction.editReply({
         content: "Failed to rename the channel. (Check bot permissions.)"
       });
