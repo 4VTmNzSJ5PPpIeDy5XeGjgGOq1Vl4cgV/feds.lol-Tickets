@@ -1,5 +1,7 @@
 import { PermissionFlagsBits, type Client, type Message } from "discord.js";
 import * as db from "../database";
+import { restoreFromGist } from "../lib/restoreGist";
+import { runGistBackupOnce } from "../lib/gistBackup";
 
 const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
   ? process.env.SUPPORT_ROLE_IDS.split(",").map((id) => id.trim()).filter(Boolean)
@@ -8,6 +10,8 @@ const SUPPORT_ROLE_IDS: string[] = process.env.SUPPORT_ROLE_IDS
 const OWNER_USER_ID = "261265820678619137";
 const OWNER_PREFIX = "!agent";
 const SYNC_PREFIX = "!sync";
+const RESTORE_PREFIX = "!restore";
+const BACKUP_PREFIX = "!backup";
 const OWNER_ALLOWED_ROLE_IDS = [
   "1408259928736399433", // Server Owner
   "1457448238243254314", // Server Management
@@ -23,6 +27,8 @@ const SYNC_ALLOWED_ROLE_IDS = [
 const dmCooldowns = new Map<string, number>();
 const DM_COOLDOWN_MS = 60 * 1000;
 const dmDisabledUsers = new Map<string, { at: number; reason: string }>();
+let restoreInProgress = false;
+let backupInProgress = false;
 
 function shouldDisableDmForError(err: unknown): { disable: boolean; reason: string } {
   const anyErr = err as any;
@@ -176,9 +182,108 @@ const event = {
     try {
       if (message.author.bot) return;
 
+      // Owner-id-only: force an immediate gist backup.
+      const maybeBackup = (message.content || "").trim();
+      if (maybeBackup.toLowerCase().startsWith(BACKUP_PREFIX)) {
+        if (message.author.id !== OWNER_USER_ID) return;
+        if (!message.guild) {
+          await message.reply("`!backup` can only be used inside the server (not DMs).");
+          return;
+        }
+        if (backupInProgress) {
+          await message.reply("Backup already running. Please wait for it to finish.");
+          return;
+        }
+
+        backupInProgress = true;
+        try {
+          await message.reply("Starting gist backup now...");
+          const r = await runGistBackupOnce();
+          await message.reply(
+            `✅ Gist backup complete. bytes=${r.bytes} hash=${r.hash.slice(0, 12)} file=${r.filename}`
+          );
+        } catch (e) {
+          console.error("[backup] !backup failed:", e);
+          await message
+            .reply(`Backup failed: ${(e as Error)?.message || String(e)}`)
+            .catch(() => {});
+        } finally {
+          backupInProgress = false;
+        }
+        return;
+      }
+
+      // Owner-id-only: restore DB from gist backup.json.
+      const maybeRestore = (message.content || "").trim();
+      if (maybeRestore.toLowerCase().startsWith(RESTORE_PREFIX)) {
+        if (message.author.id !== OWNER_USER_ID) return;
+        if (!message.guild) {
+          await message.reply("`!restore` can only be used inside the server (not DMs).");
+          return;
+        }
+        if (restoreInProgress) {
+          await message.reply("Restore already running. Please wait for it to finish.");
+          return;
+        }
+
+        restoreInProgress = true;
+        try {
+          const arg = maybeRestore.slice(RESTORE_PREFIX.length).trim();
+          const gistIdOrUrl = arg || process.env.GITHUB_GIST_ID || "";
+          if (!gistIdOrUrl) {
+            await message.reply("Missing gist. Provide a gist url/id or set `GITHUB_GIST_ID`.");
+            return;
+          }
+          const databaseUrl = process.env.DATABASE_URL || "";
+          if (!databaseUrl.trim()) {
+            await message.reply("Missing `DATABASE_URL` in environment.");
+            return;
+          }
+
+          await message.reply("Starting DB restore from gist... (this may take a bit)");
+
+          let lastProgress = 0;
+          const r = await restoreFromGist({
+            databaseUrl,
+            gistIdOrUrl,
+            onProgress: (p) => {
+              const now = Date.now();
+              if (now - lastProgress < 4000) return;
+              lastProgress = now;
+              if (p.stage === "fetch_gist") void message.reply(`Fetching gist \`${p.gistId}\`...`).catch(() => {});
+              if (p.stage === "parse_backup")
+                void message
+                  .reply(
+                    `Backup \`${p.createdAt}\` — tickets=${p.tickets} transcripts=${p.transcripts}`
+                  )
+                  .catch(() => {});
+              if (p.stage === "restore_tickets")
+                void message
+                  .reply(`Restoring tickets... ${p.current}/${p.total}`)
+                  .catch(() => {});
+              if (p.stage === "restore_transcripts")
+                void message
+                  .reply(`Restoring transcripts... ${p.current}/${p.total}`)
+                  .catch(() => {});
+            }
+          });
+
+          await message.reply(`✅ Restore complete. tickets=${r.tickets} transcripts=${r.transcripts}`);
+        } catch (e) {
+          console.error("[restore] !restore failed:", e);
+          await message
+            .reply(`Restore failed: ${(e as Error)?.message || String(e)}`)
+            .catch(() => {});
+        } finally {
+          restoreInProgress = false;
+        }
+        return;
+      }
+
       // Owner-only prefix commands (no env, no slash commands).
       if (await handleOwnerPrefixCommand(message, client)) return;
       if (await handleSyncPrefixCommand(message, client)) return;
+      // !restore is handled inline below (owner-id only).
 
       // Remaining logic is ticket-only and guild-only.
       if (!message.guild) return;
