@@ -742,10 +742,10 @@ function renderLogsPage(opts: {
 }
 
 function renderErrorsPage(): string {
-  const logs = runtimeLogs.filter((e) => e.level !== "log");
+  const logs = runtimeLogs.filter((e) => e.level === "error");
   return renderLogsPage({
-    title: "Errors & Warnings",
-    subtitleHtml: `Latest ${logs.length} warn/error event(s).`,
+    title: "Errors",
+    subtitleHtml: `Latest ${logs.length} error(s).`,
     logs,
     active: "errors"
   });
@@ -881,7 +881,7 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === "/errors.json") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      const logs = runtimeLogs.filter((e) => e.level !== "log");
+      const logs = runtimeLogs.filter((e) => e.level === "error");
       res.end(
         JSON.stringify(
           {
