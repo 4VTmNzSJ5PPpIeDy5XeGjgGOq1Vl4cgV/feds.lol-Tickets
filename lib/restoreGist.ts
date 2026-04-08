@@ -25,6 +25,31 @@ function parseGistId(input: string): string {
   return m ? m[0] : v;
 }
 
+function looksLikeGistRevision(seg: string): boolean {
+  const s = String(seg || "").trim();
+  return /^[a-f0-9]{40}$/i.test(s);
+}
+
+function parseGistFilenameFromUrl(input: string): string | null {
+  const raw = String(input || "").trim();
+  if (!raw) return null;
+
+  // Example:
+  // https://gist.github.com/<user>/<gistId>/<revision>/<filename>
+  // https://gist.github.com/<user>/<gistId>/<filename>
+  const m = raw.match(/gist\.github\.com\/[^/]+\/([a-f0-9]{32})(?:\/([^/?#]+))?(?:\/([^/?#]+))?/i);
+  if (!m) return null;
+
+  const seg2 = m[2] ? decodeURIComponent(m[2]) : "";
+  const seg3 = m[3] ? decodeURIComponent(m[3]) : "";
+
+  if (seg2 && looksLikeGistRevision(seg2)) {
+    return seg3 || null;
+  }
+  // If seg2 exists and isn't a revision, it's likely the filename.
+  return seg2 || null;
+}
+
 async function fetchJson(url: string): Promise<any> {
   const token = (process.env.GITHUB_GIST_TOKEN || "").trim();
   const res = await fetch(url, {
@@ -62,10 +87,15 @@ export async function restoreFromGist(opts: {
 }): Promise<{ tickets: number; transcripts: number; createdAt: string }> {
   const gistId = parseGistId(opts.gistIdOrUrl);
   if (!gistId) throw new Error("[restore] Missing gist id/url");
+  const preferredFilename = parseGistFilenameFromUrl(opts.gistIdOrUrl);
 
   opts.onProgress?.({ stage: "fetch_gist", gistId });
   const gist = await fetchJson(`https://api.github.com/gists/${gistId}`);
-  const file = gist?.files?.["backup.json"] || Object.values(gist?.files || {})?.[0];
+  const files = gist?.files || {};
+  const file =
+    (preferredFilename ? files?.[preferredFilename] : null) ||
+    files?.["backup.json"] ||
+    Object.values(files)?.[0];
   const rawUrl = file?.raw_url as string | undefined;
   if (!rawUrl) throw new Error("[restore] Could not find backup file raw_url in gist.");
 
