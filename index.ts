@@ -77,7 +77,8 @@ function addRuntimeLog(level: LogLevel, args: unknown[]): void {
     message: args.map(safeStringify).join(" ")
   });
 
-  if (runtimeLogs.length > MAX_RUNTIME_LOGS) {
+  // Rolling buffer: never stop logging — drop oldest entries when over cap.
+  while (runtimeLogs.length > MAX_RUNTIME_LOGS) {
     runtimeLogs.shift();
   }
 }
