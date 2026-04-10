@@ -212,10 +212,6 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 // NOTE: Admin DM notifications and DM cleanup are intentionally removed to reduce REST traffic/rate-limits.
 // Errors still surface via logs and the /logs + /status endpoints.
 
@@ -1334,10 +1330,20 @@ async function startBot(): Promise<void> {
 
   client.commands = new Collection<string, CommandModule>() as unknown as CommandCollection;
 
+  /** Latest wall-clock ms when @discordjs/rest cooldown should be done (max of emitted rateLimited events). */
+  let restRateLimitedUntilMs = 0;
+  let stallTimer: NodeJS.Timeout | null = null;
+
   client.once(Events.ClientReady, async () => {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+    restRateLimitedUntilMs = 0;
     updateStatus({
       state: "ready",
-      lastReady: isoNow()
+      lastReady: isoNow(),
+      restRateLimitedUntil: null
     });
 
     if (!client.user) return;
@@ -1484,9 +1490,6 @@ async function startBot(): Promise<void> {
     }
   });
 
-  /** Latest wall-clock ms when @discordjs/rest cooldown should be done (max of emitted rateLimited events). */
-  let restRateLimitedUntilMs = 0;
-
   client.rest.on("rateLimited", (info) => {
     const i = info as {
       route?: string;
@@ -1530,16 +1533,14 @@ async function startBot(): Promise<void> {
   });
 
   /**
-   * If `ClientReady` never fires for this long, we destroy and try login again.
+   * If `ClientReady` never fires for this long, we destroy and exit so the process supervisor
+   * starts a fresh `Client`. Re-calling `login()` on the same instance after `destroy()` is not
+   * reliable in discord.js (the internal WebSocket manager may stay in a destroyed state).
    * Not env-configurable: tune in code if needed. ~5.5m is above typical REST 429 Retry-After.
    * When Discord emits `rateLimited`, we **postpone** this check until cooldown + buffer (see below).
    */
   const LOGIN_STALL_MS = 330_000;
-  const MAX_LOGIN_RETRIES = 3;
   console.log("[boot] login stall watchdog ms=", LOGIN_STALL_MS);
-
-  let loginRetries = 0;
-  let stallTimer: NodeJS.Timeout | null = null;
 
   /** Extra ms after Discord’s stated cooldown before running stall recovery (lets in-flight retries finish). */
   const RATE_LIMIT_STALL_BUFFER_MS = 10_000;
@@ -1570,13 +1571,9 @@ async function startBot(): Promise<void> {
           warn: `Login has not reached ready after ${Math.round(LOGIN_STALL_MS / 1000)} seconds`
         }
       });
-      console.warn("[boot] Login has not reached ready in time; restarting gateway session");
-
-      loginRetries++;
-      if (loginRetries > MAX_LOGIN_RETRIES) {
-        console.error("[boot] Max login retries exceeded; exiting for host restart");
-        process.exit(1);
-      }
+      console.warn(
+        "[boot] Login has not reached ready in time; destroying client and exiting for clean restart"
+      );
 
       try {
         await client.destroy();
@@ -1584,20 +1581,11 @@ async function startBot(): Promise<void> {
         console.warn("[boot] client.destroy failed:", (e as Error)?.message || e);
       }
 
-      await sleep(2000 * loginRetries);
-      updateStatus({ state: "logging_in", lastLoginAttempt: isoNow() });
-      armStallTimer();
-      await client.login(TOKEN);
+      process.exit(1);
     }, delay);
   };
 
   armStallTimer();
-
-  client.once(Events.ClientReady, () => {
-    if (stallTimer) clearTimeout(stallTimer);
-    restRateLimitedUntilMs = 0;
-    updateStatus({ restRateLimitedUntil: null });
-  });
 
   console.log("[boot] Logging into Discord...");
 
