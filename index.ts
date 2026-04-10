@@ -35,7 +35,6 @@ interface RuntimeLogEntry {
 type BotState =
   | "starting"
   | "logging_in"
-  | "login_stalled"
   | "ready"
   | "reconnecting"
   | "disconnected"
@@ -46,8 +45,6 @@ interface BotStatus {
   startedAt: string;
   lastLoginAttempt: string | null;
   lastReady: string | null;
-  /** ISO time when Discord REST cooldown is expected to end (from rateLimited.retryAfter); informational. */
-  restRateLimitedUntil: string | null;
   lastDisconnect: unknown;
   lastError: unknown;
   lastWarn: unknown;
@@ -197,7 +194,6 @@ const botStatus: BotStatus = {
   startedAt: new Date().toISOString(),
   lastLoginAttempt: null,
   lastReady: null,
-  restRateLimitedUntil: null,
   lastDisconnect: null,
   lastError: null,
   lastWarn: null,
@@ -301,8 +297,6 @@ function statusTone(state: BotStatus["state"]): { label: string; color: string }
       return { label: "READY", color: "#3fb950" };
     case "logging_in":
       return { label: "LOGGING IN", color: "#d29922" };
-    case "login_stalled":
-      return { label: "LOGIN STALLED", color: "#f85149" };
     case "reconnecting":
       return { label: "RECONNECTING", color: "#d29922" };
     case "disconnected":
@@ -703,10 +697,6 @@ function renderStatusPage(): string {
     ["Started At", botStatus.startedAt || "—"],
     ["Last Login Attempt", botStatus.lastLoginAttempt || "—"],
     ["Last Ready", botStatus.lastReady || "—"],
-    [
-      "REST rate limit clears (est.)",
-      botStatus.restRateLimitedUntil || "—"
-    ],
     [
       "Last Disconnect",
       botStatus.lastDisconnect ? JSON.stringify(botStatus.lastDisconnect, null, 2) : "—"
@@ -1330,20 +1320,10 @@ async function startBot(): Promise<void> {
 
   client.commands = new Collection<string, CommandModule>() as unknown as CommandCollection;
 
-  /** Latest wall-clock ms when @discordjs/rest cooldown should be done (max of emitted rateLimited events). */
-  let restRateLimitedUntilMs = 0;
-  let stallTimer: NodeJS.Timeout | null = null;
-
   client.once(Events.ClientReady, async () => {
-    if (stallTimer) {
-      clearTimeout(stallTimer);
-      stallTimer = null;
-    }
-    restRateLimitedUntilMs = 0;
     updateStatus({
       state: "ready",
-      lastReady: isoNow(),
-      restRateLimitedUntil: null
+      lastReady: isoNow()
     });
 
     if (!client.user) return;
@@ -1490,40 +1470,6 @@ async function startBot(): Promise<void> {
     }
   });
 
-  client.rest.on("rateLimited", (info) => {
-    const i = info as {
-      route?: string;
-      limit?: number;
-      method?: string;
-      global?: boolean;
-      retryAfter?: number;
-    };
-    const retryAfter =
-      typeof i.retryAfter === "number" && Number.isFinite(i.retryAfter) && i.retryAfter > 0
-        ? i.retryAfter
-        : 0;
-    const until = Date.now() + retryAfter;
-    if (until > restRateLimitedUntilMs) {
-      restRateLimitedUntilMs = until;
-    }
-    updateStatus({
-      restRateLimitedUntil: new Date(restRateLimitedUntilMs).toISOString()
-    });
-    console.warn(
-      "[rest] Discord rate limit — @discordjs/rest will wait retryAfterMs then retry; avoid tight redeploy loops.",
-      "retryAfterMs=",
-      i.retryAfter ?? "?",
-      "cooldownUntil=",
-      new Date(restRateLimitedUntilMs).toISOString(),
-      "route=",
-      i.route,
-      "global=",
-      i.global,
-      "method=",
-      i.method
-    );
-  });
-
   loadCommands(client);
   loadEvents(client);
 
@@ -1531,61 +1477,6 @@ async function startBot(): Promise<void> {
     state: "logging_in",
     lastLoginAttempt: isoNow()
   });
-
-  /**
-   * If `ClientReady` never fires for this long, we destroy and exit so the process supervisor
-   * starts a fresh `Client`. Re-calling `login()` on the same instance after `destroy()` is not
-   * reliable in discord.js (the internal WebSocket manager may stay in a destroyed state).
-   * Not env-configurable: tune in code if needed. ~5.5m is above typical REST 429 Retry-After.
-   * When Discord emits `rateLimited`, we **postpone** this check until cooldown + buffer (see below).
-   */
-  const LOGIN_STALL_MS = 330_000;
-  console.log("[boot] login stall watchdog ms=", LOGIN_STALL_MS);
-
-  /** Extra ms after Discord’s stated cooldown before running stall recovery (lets in-flight retries finish). */
-  const RATE_LIMIT_STALL_BUFFER_MS = 10_000;
-
-  const armStallTimer = (delayMs?: number) => {
-    if (stallTimer) clearTimeout(stallTimer);
-    const delay = typeof delayMs === "number" && delayMs > 0 ? delayMs : LOGIN_STALL_MS;
-    stallTimer = setTimeout(async () => {
-      if (botStatus.state === "ready" || botStatus.lastReady) return;
-
-      const now = Date.now();
-      if (now < restRateLimitedUntilMs) {
-        const deferMs = restRateLimitedUntilMs - now + RATE_LIMIT_STALL_BUFFER_MS;
-        console.warn(
-          "[boot] Login stall recovery deferred",
-          Math.round(deferMs / 1000),
-          "s — waiting for Discord REST cooldown until",
-          new Date(restRateLimitedUntilMs).toISOString()
-        );
-        armStallTimer(deferMs);
-        return;
-      }
-
-      updateStatus({
-        state: "login_stalled",
-        lastWarn: {
-          time: isoNow(),
-          warn: `Login has not reached ready after ${Math.round(LOGIN_STALL_MS / 1000)} seconds`
-        }
-      });
-      console.warn(
-        "[boot] Login has not reached ready in time; destroying client and exiting for clean restart"
-      );
-
-      try {
-        await client.destroy();
-      } catch (e) {
-        console.warn("[boot] client.destroy failed:", (e as Error)?.message || e);
-      }
-
-      process.exit(1);
-    }, delay);
-  };
-
-  armStallTimer();
 
   console.log("[boot] Logging into Discord...");
 
