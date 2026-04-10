@@ -153,7 +153,10 @@ function resolveDiscordRestConnectTimeoutMs(): number {
   return Math.min(120_000, parsed);
 }
 
-/** GET /gateway (no bot token) via the same Undici agent used by discord.js REST — surfaces hangs before login. */
+/**
+ * Optional GET /gateway (no token). Off by default — it consumes Discord quota and shared cloud egress often gets HTTP 429.
+ * Enable with DISCORD_REST_PROBE=1 when debugging connectivity only.
+ */
 async function probeDiscordRestReachability(agent: Agent, timeoutMs: number): Promise<void> {
   const cap = Math.min(20_000, Math.max(5_000, timeoutMs));
   const url = "https://discord.com/api/v10/gateway";
@@ -166,7 +169,23 @@ async function probeDiscordRestReachability(agent: Agent, timeoutMs: number): Pr
       "user-agent": "DiscordBot (connectivity-probe, +https://discord.com)"
     }
   });
-  console.log("[boot] Discord REST probe OK status=", statusCode);
+  if (statusCode === 429) {
+    console.warn(
+      "[boot] Discord REST probe got HTTP 429 (rate limited). Shared hosting egress is often limited; avoid extra probes and redeploy spam."
+    );
+  } else if (statusCode >= 200 && statusCode < 300) {
+    console.log("[boot] Discord REST probe OK status=", statusCode);
+  } else {
+    console.warn("[boot] Discord REST probe unexpected status=", statusCode);
+  }
+}
+
+/** Time to wait for ClientReady before destroy+retry. Must exceed typical Discord Retry-After (often ~120s on 429). Override with LOGIN_STALL_MS. */
+function resolveLoginStallMs(): number {
+  const raw = process.env.LOGIN_STALL_MS?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 60_000) return Math.min(600_000, parsed);
+  return 330_000;
 }
 
 console.log(
@@ -1289,13 +1308,16 @@ async function startBot(): Promise<void> {
     bodyTimeout: restTimeoutMs
   });
 
-  try {
-    await probeDiscordRestReachability(discordRestAgent, restTimeoutMs);
-  } catch (e) {
-    console.error(
-      "[boot] Discord REST probe failed; login will still be attempted:",
-      formatThrown(e)
-    );
+  const probeOn = process.env.DISCORD_REST_PROBE?.trim() === "1";
+  if (probeOn) {
+    try {
+      await probeDiscordRestReachability(discordRestAgent, restTimeoutMs);
+    } catch (e) {
+      console.error(
+        "[boot] Discord REST probe failed; login will still be attempted:",
+        formatThrown(e)
+      );
+    }
   }
 
   const client = new Client({
@@ -1464,16 +1486,23 @@ async function startBot(): Promise<void> {
   });
 
   client.rest.on("rateLimited", (info) => {
+    const i = info as {
+      route?: string;
+      limit?: number;
+      method?: string;
+      global?: boolean;
+      retryAfter?: number;
+    };
     console.warn(
-      "[rest] rateLimited",
+      "[rest] Discord rate limit — library will wait retryAfterMs before continuing; avoid tight redeploy loops.",
+      "retryAfterMs=",
+      i.retryAfter ?? "?",
       "route=",
-      (info as { route?: string }).route,
-      "limit=",
-      (info as { limit?: number }).limit,
-      "method=",
-      (info as { method?: string }).method,
+      i.route,
       "global=",
-      (info as { global?: boolean }).global
+      i.global,
+      "method=",
+      i.method
     );
   });
 
@@ -1485,9 +1514,10 @@ async function startBot(): Promise<void> {
     lastLoginAttempt: isoNow()
   });
 
-  // If gateway login stalls, force a clean reconnect. This avoids “stuck” instances on host restarts.
-  const LOGIN_STALL_MS = 120000;
+  // If gateway login stalls, force a clean reconnect. Must be > typical HTTP 429 Retry-After wait inside @discordjs/rest.
+  const LOGIN_STALL_MS = resolveLoginStallMs();
   const MAX_LOGIN_RETRIES = 3;
+  console.log("[boot] login stall timeout ms=", LOGIN_STALL_MS, "(env LOGIN_STALL_MS)");
 
   let loginRetries = 0;
   let stallTimer: NodeJS.Timeout | null = null;
