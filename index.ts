@@ -1,12 +1,13 @@
 import "dotenv/config";
 
 import dns from "node:dns";
+import net from "node:net";
 import fs from "fs";
 import path from "path";
 import http from "http";
 import { URL } from "url";
 
-import { Agent } from "undici";
+import { Agent, request } from "undici";
 
 import {
   ActivityType,
@@ -129,6 +130,15 @@ if (!TOKEN) {
 // Prefer IPv4 for outbound connections (Undici/discord.js REST may not honor NODE_OPTIONS alone).
 dns.setDefaultResultOrder("ipv4first");
 
+// Node's dual-stack "happy eyeballs" can stall badly on some cloud hosts talking to Discord.
+const netWithAutoFamily = net as typeof net & {
+  setDefaultAutoSelectFamily?: (enabled: boolean) => void;
+};
+if (typeof netWithAutoFamily.setDefaultAutoSelectFamily === "function") {
+  netWithAutoFamily.setDefaultAutoSelectFamily(false);
+  console.log("[boot] net.setDefaultAutoSelectFamily(false) for outbound to Discord");
+}
+
 if (process.env.HTTP_PROXY?.trim() || process.env.HTTPS_PROXY?.trim()) {
   console.warn(
     "[boot] HTTP_PROXY or HTTPS_PROXY is set. A misconfigured proxy can hang requests to Discord; unset unless outbound traffic must use a proxy."
@@ -141,6 +151,22 @@ function resolveDiscordRestConnectTimeoutMs(): number {
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed) || parsed < 5_000) return 25_000;
   return Math.min(120_000, parsed);
+}
+
+/** GET /gateway (no bot token) via the same Undici agent used by discord.js REST — surfaces hangs before login. */
+async function probeDiscordRestReachability(agent: Agent, timeoutMs: number): Promise<void> {
+  const cap = Math.min(20_000, Math.max(5_000, timeoutMs));
+  const url = "https://discord.com/api/v10/gateway";
+  console.log("[boot] Discord REST reachability probe", url, "timeoutMs=", cap);
+  const { statusCode } = await request(url, {
+    method: "GET",
+    dispatcher: agent,
+    signal: AbortSignal.timeout(cap),
+    headers: {
+      "user-agent": "DiscordBot (connectivity-probe, +https://discord.com)"
+    }
+  });
+  console.log("[boot] Discord REST probe OK status=", statusCode);
 }
 
 console.log(
@@ -1256,9 +1282,21 @@ async function startBot(): Promise<void> {
 
   console.log("[boot] Creating Discord client");
 
+  const restTimeoutMs = resolveDiscordRestConnectTimeoutMs();
   const discordRestAgent = new Agent({
-    connectTimeout: resolveDiscordRestConnectTimeoutMs()
+    connectTimeout: restTimeoutMs,
+    headersTimeout: restTimeoutMs,
+    bodyTimeout: restTimeoutMs
   });
+
+  try {
+    await probeDiscordRestReachability(discordRestAgent, restTimeoutMs);
+  } catch (e) {
+    console.error(
+      "[boot] Discord REST probe failed; login will still be attempted:",
+      formatThrown(e)
+    );
+  }
 
   const client = new Client({
     intents: [
