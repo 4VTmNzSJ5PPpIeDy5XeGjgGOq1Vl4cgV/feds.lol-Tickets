@@ -20,6 +20,7 @@
     "discord-html-transcripts": "^3.2.0",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
+    "undici": "^6.21.3",
     "form-data": "^4.0.5",
     "node-fetch": "^2.7.0",
     "pg": "^8.20.0"

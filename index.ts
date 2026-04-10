@@ -1,9 +1,12 @@
 import "dotenv/config";
 
+import dns from "node:dns";
 import fs from "fs";
 import path from "path";
 import http from "http";
 import { URL } from "url";
+
+import { Agent } from "undici";
 
 import {
   ActivityType,
@@ -121,6 +124,23 @@ function requireEnv(name: string): string {
 const TOKEN = (process.env.DISCORD_TOKEN || process.env.TOKEN)?.trim();
 if (!TOKEN) {
   throw new Error("[boot] Missing TOKEN or DISCORD_TOKEN in .env");
+}
+
+// Prefer IPv4 for outbound connections (Undici/discord.js REST may not honor NODE_OPTIONS alone).
+dns.setDefaultResultOrder("ipv4first");
+
+if (process.env.HTTP_PROXY?.trim() || process.env.HTTPS_PROXY?.trim()) {
+  console.warn(
+    "[boot] HTTP_PROXY or HTTPS_PROXY is set. A misconfigured proxy can hang requests to Discord; unset unless outbound traffic must use a proxy."
+  );
+}
+
+/** Undici TCP/TLS connect timeout for Discord REST (gateway discovery). Default 25s; override with DISCORD_REST_CONNECT_TIMEOUT_MS. */
+function resolveDiscordRestConnectTimeoutMs(): number {
+  const raw = process.env.DISCORD_REST_CONNECT_TIMEOUT_MS?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed) || parsed < 5_000) return 25_000;
+  return Math.min(120_000, parsed);
 }
 
 console.log(
@@ -1236,6 +1256,10 @@ async function startBot(): Promise<void> {
 
   console.log("[boot] Creating Discord client");
 
+  const discordRestAgent = new Agent({
+    connectTimeout: resolveDiscordRestConnectTimeoutMs()
+  });
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -1243,7 +1267,10 @@ async function startBot(): Promise<void> {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages
     ],
-    partials: [Partials.Channel]
+    partials: [Partials.Channel],
+    rest: {
+      agent: discordRestAgent
+    }
   }) as Client & { commands: CommandCollection };
 
   client.commands = new Collection<string, CommandModule>() as unknown as CommandCollection;
