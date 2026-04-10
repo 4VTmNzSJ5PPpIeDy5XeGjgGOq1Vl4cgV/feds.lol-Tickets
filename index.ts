@@ -182,23 +182,6 @@ async function probeDiscordRestReachability(agent: Agent, timeoutMs: number): Pr
   }
 }
 
-/**
- * Max time without `ready` before we destroy+retry — but only for **unknown** stalls.
- *
- * Discord REST **429** cooldowns are separate: `@discordjs/rest` already sleeps and retries using
- * Discord’s timing, and we **defer** this watchdog until `rateLimited.retryAfter` has passed
- * (see `restRateLimitedUntilMs`). This value still matters because many login hangs never emit
- * `rateLimited` (gateway/WebSocket stuck, TLS/DNS weirdness, etc.): Discord never sends a timer for those.
- *
- * Default is above typical 429 Retry-After so we don’t interrupt legitimate REST waits. Override: LOGIN_STALL_MS.
- */
-function resolveLoginStallMs(): number {
-  const raw = process.env.LOGIN_STALL_MS?.trim();
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(parsed) && parsed >= 60_000) return Math.min(600_000, parsed);
-  return 330_000;
-}
-
 console.log(
   "[boot] starting",
   "env=",
@@ -1546,17 +1529,14 @@ async function startBot(): Promise<void> {
     lastLoginAttempt: isoNow()
   });
 
-  // Watchdog for “no ready” when Discord does **not** tell us why (WS hang, etc.). REST 429 defers this timer.
-  const LOGIN_STALL_MS = resolveLoginStallMs();
+  /**
+   * If `ClientReady` never fires for this long, we destroy and try login again.
+   * Not env-configurable: tune in code if needed. ~5.5m is above typical REST 429 Retry-After.
+   * When Discord emits `rateLimited`, we **postpone** this check until cooldown + buffer (see below).
+   */
+  const LOGIN_STALL_MS = 330_000;
   const MAX_LOGIN_RETRIES = 3;
-  console.log(
-    "[boot] login stall watchdog ms=",
-    LOGIN_STALL_MS,
-    process.env.LOGIN_STALL_MS?.trim()
-      ? "(from LOGIN_STALL_MS)"
-      : "(default; set LOGIN_STALL_MS to override)",
-    "| REST 429 cooldowns extend this automatically via rateLimited"
-  );
+  console.log("[boot] login stall watchdog ms=", LOGIN_STALL_MS);
 
   let loginRetries = 0;
   let stallTimer: NodeJS.Timeout | null = null;
