@@ -49,7 +49,17 @@ interface BotStatus {
 }
 
 const runtimeLogs: RuntimeLogEntry[] = [];
-const MAX_RUNTIME_LOGS = 300;
+
+/** In-memory cap for /logs (strings only; keep bounded for RAM). Override with RUNTIME_LOG_MAX. */
+function resolveRuntimeLogMax(): number {
+  const raw = process.env.RUNTIME_LOG_MAX?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  const fallback = 2500;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(10_000, Math.max(100, parsed));
+}
+
+const MAX_RUNTIME_LOGS = resolveRuntimeLogMax();
 
 function safeStringify(value: unknown): string {
   if (typeof value === "string") return value;
@@ -117,7 +127,9 @@ console.log(
   "env=",
   process.env.NODE_ENV || "not set",
   "port=",
-  process.env.PORT || "not set"
+  process.env.PORT || "not set",
+  "runtimeLogsMax=",
+  MAX_RUNTIME_LOGS
 );
 
 const botStatus: BotStatus = {
