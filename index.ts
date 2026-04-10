@@ -1540,7 +1540,13 @@ async function startBot(): Promise<void> {
   // If gateway login stalls, force a clean reconnect. Must be > typical HTTP 429 Retry-After wait inside @discordjs/rest.
   const LOGIN_STALL_MS = resolveLoginStallMs();
   const MAX_LOGIN_RETRIES = 3;
-  console.log("[boot] login stall timeout ms=", LOGIN_STALL_MS, "(env LOGIN_STALL_MS)");
+  console.log(
+    "[boot] login stall timeout ms=",
+    LOGIN_STALL_MS,
+    process.env.LOGIN_STALL_MS?.trim()
+      ? "(from LOGIN_STALL_MS)"
+      : "(default; set LOGIN_STALL_MS to override)"
+  );
 
   let loginRetries = 0;
   let stallTimer: NodeJS.Timeout | null = null;
