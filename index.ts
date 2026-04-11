@@ -121,19 +121,28 @@ function requireEnv(name: string): string {
   return value.trim();
 }
 
-const TOKEN = (process.env.DISCORD_TOKEN || process.env.TOKEN)?.trim();
-if (!TOKEN) {
+const tokenRaw = (process.env.DISCORD_TOKEN || process.env.TOKEN)?.trim();
+if (!tokenRaw) {
   throw new Error("[boot] Missing TOKEN or DISCORD_TOKEN in .env");
 }
+const TOKEN: string = tokenRaw;
 
 // Prefer IPv4 for outbound connections (Undici/discord.js REST may not honor NODE_OPTIONS alone).
 dns.setDefaultResultOrder("ipv4first");
 
 // Node's dual-stack "happy eyeballs" can stall badly on some cloud hosts talking to Discord.
+// On other hosts, forcing this off can worsen gateway connects — toggle from the dashboard:
+// DISCORD_SKIP_NET_AUTO_SELECT_FAMILY_PATCH=1
 const netWithAutoFamily = net as typeof net & {
   setDefaultAutoSelectFamily?: (enabled: boolean) => void;
 };
-if (typeof netWithAutoFamily.setDefaultAutoSelectFamily === "function") {
+const skipNetAutoFamilyPatch =
+  process.env.DISCORD_SKIP_NET_AUTO_SELECT_FAMILY_PATCH?.trim() === "1";
+if (skipNetAutoFamilyPatch) {
+  console.log(
+    "[boot] DISCORD_SKIP_NET_AUTO_SELECT_FAMILY_PATCH=1 — not changing net.setDefaultAutoSelectFamily"
+  );
+} else if (typeof netWithAutoFamily.setDefaultAutoSelectFamily === "function") {
   netWithAutoFamily.setDefaultAutoSelectFamily(false);
   console.log("[boot] net.setDefaultAutoSelectFamily(false) for outbound to Discord");
 }
@@ -150,6 +159,48 @@ function resolveDiscordRestConnectTimeoutMs(): number {
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed) || parsed < 5_000) return 25_000;
   return Math.min(120_000, parsed);
+}
+
+/** Max wait for gateway READY after client.login. Default 120s. Override with DISCORD_LOGIN_TIMEOUT_MS (20000–600000). */
+function resolveDiscordLoginTimeoutMs(): number {
+  const raw = process.env.DISCORD_LOGIN_TIMEOUT_MS?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed) || parsed < 20_000) return 120_000;
+  return Math.min(600_000, parsed);
+}
+
+async function loginWithTimeout(
+  client: Client,
+  token: string,
+  timeoutMs: number
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void client.destroy().catch(() => {});
+      reject(
+        new Error(
+          `[boot] Discord login timed out after ${timeoutMs}ms (no READY). ` +
+            `Outbound WebSocket to Discord is often blocked or stalling on this host. ` +
+            `Try DISCORD_SKIP_NET_AUTO_SELECT_FAMILY_PATCH=1, unset HTTP_PROXY/HTTPS_PROXY unless required, ` +
+            `or ask your host about WSS to gateway.discord.gg.`
+        )
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    await Promise.race([
+      client.login(token).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+      }),
+      timeout
+    ]);
+  } catch (e) {
+    if (timer !== undefined) clearTimeout(timer);
+    await client.destroy().catch(() => {});
+    throw e;
+  }
 }
 
 /**
@@ -1480,7 +1531,10 @@ async function startBot(): Promise<void> {
 
   console.log("[boot] Logging into Discord...");
 
-  await client.login(TOKEN);
+  const loginTimeoutMs = resolveDiscordLoginTimeoutMs();
+  console.log("[boot] Discord login timeout (ms):", loginTimeoutMs);
+
+  await loginWithTimeout(client, TOKEN, loginTimeoutMs);
 }
 
 startBot().catch(async (err) => {
